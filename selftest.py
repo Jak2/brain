@@ -288,6 +288,55 @@ def test_due_treats_non_dict_in_flight_as_none():
         shutil.rmtree(str(root), ignore_errors=True)
 
 
+def test_bootstrap_is_idempotent_and_additive():
+    root = _tmp_root()
+    try:
+        shutil.copytree(str(brain.ROOT / "adapters"), str(root / "adapters"))
+        config = brain.load_config()
+
+        assert _silent(brain.cmd_bootstrap, "cursor", config, root) == 0
+        cursor_cmd = root / ".cursor" / "commands" / "start.md"
+        assert cursor_cmd.is_file(), "cursor adapter not installed"
+        first = cursor_cmd.read_text(encoding="utf-8")
+
+        assert _silent(brain.cmd_bootstrap, "cursor", config, root) == 0, "second run must succeed"
+        assert cursor_cmd.read_text(encoding="utf-8") == first, "must be idempotent"
+
+        assert _silent(brain.cmd_bootstrap, "claude", config, root) == 0
+        assert (root / "CLAUDE.md").is_file(), "claude adapter not installed"
+        assert cursor_cmd.is_file(), "installing claude must not remove cursor"
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_bootstrap_records_assistant_in_config_once():
+    root = _tmp_root()
+    try:
+        shutil.copytree(str(brain.ROOT / "adapters"), str(root / "adapters"))
+        config = brain.load_config()
+        _silent(brain.cmd_bootstrap, "cursor", config, root)
+        _silent(brain.cmd_bootstrap, "cursor", config, root)
+        import json as _json
+        written = _json.loads((root / "config.json").read_text(encoding="utf-8"))
+        assert written["assistants"] == ["cursor"], written["assistants"]
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_bootstrap_rejects_unknown_assistant():
+    root = _tmp_root()
+    try:
+        assert _silent(brain.cmd_bootstrap, "emacs-doctor", brain.load_config(), root) == 1
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_claude_adapter_imports_agents_md():
+    text = (brain.ROOT / "adapters" / "claude" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert text.lstrip().startswith("@AGENTS.md"), \
+        "CLAUDE.md must import AGENTS.md on line 1, not duplicate it"
+
+
 def run():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

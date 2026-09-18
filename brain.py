@@ -293,12 +293,51 @@ def cmd_init(config, root=ROOT):
     return 0
 
 
+ASSISTANTS = ["claude", "cursor", "copilot", "gemini"]
+
+
+def cmd_bootstrap(assistant, config, root=ROOT):
+    """Copy one assistant's adapter into place. Additive and idempotent."""
+    if assistant not in ASSISTANTS:
+        warn("unknown assistant %r - known: %s. AGENTS.md alone works; "
+             "you only lose slash commands." % (assistant, ", ".join(ASSISTANTS)))
+        return 1
+
+    source = root / "adapters" / assistant
+    if not source.is_dir():
+        warn("no adapter folder at " + str(source))
+        return 1
+
+    installed = 0
+    for item in sorted(source.rglob("*")):
+        if item.is_dir():
+            continue
+        target = root / item.relative_to(source)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and target.read_bytes() == item.read_bytes():
+            continue  # already current - idempotent, and never clobbers an edit
+        target.write_bytes(item.read_bytes())
+        installed += 1
+
+    listed = config.setdefault("assistants", [])
+    if assistant not in listed:
+        listed.append(assistant)
+        (root / "config.json").write_text(
+            json.dumps(config, indent=2) + "\n", encoding="utf-8")
+
+    print("%s adapter ready (%d file(s) written). Other adapters untouched."
+          % (assistant, installed))
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="brain.py", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("selftest", help="verify the engine")
     sub.add_parser("init", help="create data/ and its local-only git repo")
     sub.add_parser("due", help="today's briefing")
+    boot = sub.add_parser("bootstrap", help="install one assistant's adapter")
+    boot.add_argument("assistant", choices=ASSISTANTS)
     return parser
 
 
@@ -311,6 +350,8 @@ def main(argv=None):
         return cmd_init(load_config())
     if args.command == "due":
         return cmd_due(load_config())
+    if args.command == "bootstrap":
+        return cmd_bootstrap(args.assistant, load_config())
     return 0
 
 
