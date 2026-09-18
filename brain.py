@@ -4,6 +4,7 @@ import argparse
 import datetime
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -105,10 +106,83 @@ def next_interval(current, intervals, passed):
     return intervals[min(i + 1, len(intervals) - 1)] if passed else intervals[max(i - 1, 0)]
 
 
+def git(args, cwd):
+    """Run git. Returns (returncode, output). Never raises - git may be absent."""
+    try:
+        done = subprocess.run(
+            ["git"] + args, cwd=str(cwd),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        return done.returncode, done.stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, str(exc)
+
+
+def has_remote(repo):
+    code, out = git(["remote"], repo)
+    return code == 0 and bool(out.strip())
+
+
+STARTER = {
+    "target.md": (
+        "# Target\n\n"
+        "_Written by the cold-start interview. Run `/start` and answer honestly._\n\n"
+        "## Role\n\n## Ranked gaps\n"
+    ),
+    "questions.md": (
+        "# Open questions\n\n"
+        "_One line each: `- YYYY-MM-DD the question`. "
+        "Closed automatically after the expiry window._\n"
+    ),
+    "HANDOVER.md": (
+        "# Handover\n\n"
+        "_In-flight session state only. Your knowledge is in notes/ and skills/._\n\n"
+        "Nothing in flight.\n"
+    ),
+}
+
+
+def cmd_init(config, root=ROOT):
+    """Create data/ and its own git repo. Idempotent. Never overwrites content."""
+    data = root / config["paths"]["data"]
+    for key in ("notes", "skills", "log", "local"):
+        (root / config["paths"][key]).mkdir(parents=True, exist_ok=True)
+
+    for name, body in STARTER.items():
+        path = data / name
+        if not path.exists():
+            path.write_text(body, encoding="utf-8")
+
+    gitignore = data / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text("local/\n", encoding="utf-8")
+
+    state = data / "state.json"
+    if not state.exists():
+        state.write_text(json.dumps({
+            "schema": 1, "last_start": None, "last_end": None,
+            "in_flight": None, "bootstrapped": [],
+        }, indent=2) + "\n", encoding="utf-8")
+
+    if not (data / ".git").exists():
+        code, out = git(["init"], data)
+        if code != 0:
+            warn("could not create a git repo in data/ (%s) - history disabled, "
+                 "everything else works" % out)
+
+    if (data / ".git").exists() and has_remote(data):
+        warn("data/ HAS A GIT REMOTE. The no-push guarantee is void. "
+             "Remove it with: git -C %s remote remove <name>" % data)
+
+    print("ready: " + str(data))
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="brain.py", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("selftest", help="verify the engine")
+    sub.add_parser("init", help="create data/ and its local-only git repo")
     return parser
 
 
@@ -117,6 +191,8 @@ def main(argv=None):
     if args.command == "selftest":
         import selftest
         return selftest.run()
+    if args.command == "init":
+        return cmd_init(load_config())
     return 0
 
 

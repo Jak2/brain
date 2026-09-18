@@ -1,6 +1,9 @@
 """Self-checks for brain.py. Run: python brain.py selftest"""
 import datetime
+import shutil
+import tempfile
 import traceback
+from pathlib import Path
 
 import brain
 
@@ -68,6 +71,62 @@ def test_load_config_merges_defaults():
     config = brain.load_config()
     assert config["policy"]["intervals_days"] == [1, 3, 7, 16, 35], config["policy"]
     assert config["paths"]["notes"] == "data/notes", config["paths"]
+
+
+def _tmp_root():
+    """A temp dir containing a copy of config.json, cleaned up by the caller."""
+    root = Path(tempfile.mkdtemp(prefix="brain-test-"))
+    shutil.copy(str(brain.ROOT / "config.json"), str(root / "config.json"))
+    return root
+
+
+def test_init_creates_tree_and_is_idempotent():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert brain.cmd_init(config, root) == 0
+        data = root / "data"
+        for sub in ("notes", "skills", "log", "local"):
+            assert (data / sub).is_dir(), "missing " + sub
+        assert (data / "target.md").is_file()
+        assert (data / "state.json").is_file()
+        assert (data / "questions.md").is_file()
+        assert (data / ".gitignore").read_text(encoding="utf-8").strip() == "local/"
+
+        (data / "target.md").write_text("EDITED", encoding="utf-8")
+        assert brain.cmd_init(config, root) == 0, "second run must succeed"
+        assert (data / "target.md").read_text(encoding="utf-8") == "EDITED", \
+            "init must never overwrite existing content"
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_init_data_repo_has_no_remote():
+    root = _tmp_root()
+    try:
+        brain.cmd_init(brain.load_config(), root)
+        data = root / "data"
+        assert data.is_dir(), "init must create data/ whether or not git exists"
+        if (data / ".git").exists():
+            assert brain.has_remote(data) is False, "data/ must never have a remote"
+        else:
+            # git unavailable here; has_remote must still answer False, not raise
+            assert brain.has_remote(data) is False
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_init_writes_valid_state_json():
+    root = _tmp_root()
+    try:
+        brain.cmd_init(brain.load_config(), root)
+        import json as _json
+        state = _json.loads((root / "data" / "state.json").read_text(encoding="utf-8"))
+        assert state["in_flight"] is None, state
+        assert state["schema"] == 1, state
+        assert state["bootstrapped"] == [], state
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
 
 
 def run():
