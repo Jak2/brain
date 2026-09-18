@@ -142,6 +142,103 @@ STARTER = {
 }
 
 
+def read_skills(config, root=ROOT):
+    """Every parseable skill file. Malformed files warn and are skipped."""
+    folder = root / config["paths"]["skills"]
+    skills = []
+    if not folder.is_dir():
+        return skills
+    for path in sorted(folder.glob("*.md")):
+        try:
+            meta, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+        except (FrontmatterError, OSError) as exc:
+            warn("%s: %s - skipped" % (path.name, exc))
+            continue
+        meta["path"] = path
+        meta.setdefault("slug", path.stem)
+        meta.setdefault("level", 0)
+        meta.setdefault("target_level", 3)
+        skills.append(meta)
+    return skills
+
+
+def due_skills(skills, config, when):
+    """Overdue first, most overdue at the front. Mastered skills leave the rotation."""
+    mastery = config["policy"]["mastery_level"]
+    out = []
+    for skill in skills:
+        if isinstance(skill["level"], int) and skill["level"] >= mastery:
+            continue
+        # A missing or garbled date means due now - never silently never-due.
+        review = parse_date(skill.get("next_review"), when)
+        if review <= when:
+            skill["overdue_days"] = (when - review).days
+            out.append(skill)
+    return sorted(out, key=lambda s: -s["overdue_days"])
+
+
+def read_state(config, root=ROOT):
+    path = root / config["paths"]["data"] / "state.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"schema": 1, "in_flight": None, "bootstrapped": []}
+
+
+def _open_questions(config, root):
+    path = root / config["paths"]["data"] / "questions.md"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [line[2:].strip() for line in lines if line.startswith("- ")]
+
+
+def cmd_due(config, root=ROOT):
+    """Print the briefing. Must never raise - a failed briefing kills the habit."""
+    data = root / config["paths"]["data"]
+    if not data.is_dir():
+        print("no data yet - run: python brain.py init")
+        return 0
+
+    print("BRIEFING " + today().isoformat())
+
+    state = read_state(config, root)
+    flight = state.get("in_flight")
+    if flight:
+        print("interrupted: %s/%s (%s attempts, opened %s)" % (
+            flight.get("persona", "?"), flight.get("skill", "?"),
+            flight.get("attempts", 0), flight.get("opened", "?")))
+
+    skills = read_skills(config, root)
+    if not skills:
+        print("cold start: no skills yet - run the interview in templates/interview.md")
+        return 0
+
+    due = due_skills(skills, config, today())[: config["policy"]["daily_items"]]
+    if due:
+        print("due: " + ", ".join(
+            "%s(L%s, %s)" % (s["slug"], s["level"],
+                             "due today" if s["overdue_days"] == 0
+                             else "%dd overdue" % s["overdue_days"])
+            for s in due))
+    else:
+        print("due: nothing")
+
+    gaps = sorted(
+        (s for s in skills if isinstance(s["level"], int)
+         and isinstance(s["target_level"], int) and s["level"] < s["target_level"]),
+        key=lambda s: (s["level"] - s["target_level"], s["slug"]))
+    if gaps:
+        top = gaps[0]
+        print("gap: %s (L%s, target L%s)" % (top["slug"], top["level"], top["target_level"]))
+
+    questions = _open_questions(config, root)
+    if questions:
+        print("question: " + questions[0])
+    return 0
+
+
 def cmd_init(config, root=ROOT):
     """Create data/ and its own git repo. Idempotent. Never overwrites content."""
     data = root / config["paths"]["data"]
@@ -183,6 +280,7 @@ def build_parser():
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("selftest", help="verify the engine")
     sub.add_parser("init", help="create data/ and its local-only git repo")
+    sub.add_parser("due", help="today's briefing")
     return parser
 
 
@@ -193,6 +291,8 @@ def main(argv=None):
         return selftest.run()
     if args.command == "init":
         return cmd_init(load_config())
+    if args.command == "due":
+        return cmd_due(load_config())
     return 0
 
 

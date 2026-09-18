@@ -119,6 +119,17 @@ def _tmp_root():
     return root
 
 
+def _write_skill(root, slug, level, next_review, target_level=3):
+    path = root / "data" / "skills" / (slug + ".md")
+    path.write_text(
+        "---\nslug: %s\nlevel: %d\ntarget_level: %d\n"
+        "last_reviewed: 2026-01-01\nnext_review: %s\ninterval_days: 1\nevidence: []\n"
+        "---\n\n## Level rationale\nseeded\n" % (slug, level, target_level, next_review),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_init_creates_tree_and_is_idempotent():
     root = _tmp_root()
     try:
@@ -164,6 +175,69 @@ def test_init_writes_valid_state_json():
         assert state["in_flight"] is None, state
         assert state["schema"] == 1, state
         assert state["bootstrapped"] == [], state
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_read_skills_skips_malformed_without_crashing():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        _write_skill(root, "good", 2, "2020-01-01")
+        (root / "data" / "skills" / "broken.md").write_text(
+            "no frontmatter at all\n", encoding="utf-8")
+        skills = brain.read_skills(config, root)
+        assert [s["slug"] for s in skills] == ["good"], skills
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_due_reports_overdue_and_skips_mastered():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        _write_skill(root, "overdue-one", 2, "2020-01-01")
+        _write_skill(root, "future-one", 2, "2099-01-01")
+        _write_skill(root, "mastered-one", 5, "2020-01-01")
+        assert _silent(brain.cmd_due, config, root) == 0
+        skills = brain.read_skills(config, root)
+        due = brain.due_skills(skills, config, brain.today())
+        names = [s["slug"] for s in due]
+        assert "overdue-one" in names, names
+        assert "future-one" not in names, names
+        assert "mastered-one" not in names, "level 5 leaves the rotation"
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_due_treats_a_bad_date_as_due_now():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        _write_skill(root, "garbled", 1, "not-a-date")
+        due = brain.due_skills(brain.read_skills(config, root), config, brain.today())
+        assert [s["slug"] for s in due] == ["garbled"], due
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_due_on_empty_brain_says_cold_start():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        assert _silent(brain.cmd_due, config, root) == 0, "empty brain must not error"
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_due_without_init_does_not_crash():
+    root = _tmp_root()
+    try:
+        assert _silent(brain.cmd_due, brain.load_config(), root) == 0
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
 
