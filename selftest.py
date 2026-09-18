@@ -75,6 +75,37 @@ def test_load_config_merges_defaults():
     assert config["paths"]["notes"] == "data/notes", config["paths"]
 
 
+PERSONAS = ["scout", "teacher", "examiner", "scribe", "critic", "archivist"]
+PERSONA_SECTIONS = ["## Gets", "## Produces", "## Forbidden", "## Done when"]
+
+
+def test_every_persona_exists_with_all_four_sections():
+    for name in PERSONAS:
+        path = brain.ROOT / "personas" / (name + ".md")
+        assert path.is_file(), "missing persona: " + name
+        text = path.read_text(encoding="utf-8")
+        for section in PERSONA_SECTIONS:
+            assert section in text, "%s is missing %r" % (name, section)
+
+
+def test_agents_md_references_every_persona():
+    text = (brain.ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    for name in PERSONAS:
+        assert "personas/" + name + ".md" in text, "AGENTS.md never points at " + name
+
+
+def test_templates_parse_as_frontmatter():
+    for name in ("note", "skill"):
+        path = brain.ROOT / "templates" / (name + ".md")
+        assert path.is_file(), "missing template: " + name
+        brain.parse_frontmatter(path.read_text(encoding="utf-8"))
+
+
+def test_note_template_contains_a_wikilink():
+    text = (brain.ROOT / "templates" / "note.md").read_text(encoding="utf-8")
+    assert "[[" in text, "note template must demonstrate a [[link]]"
+
+
 def _silent(fn, *args, **kwargs):
     """Call a cmd_* function with stdout captured, so selftest output stays pristine."""
     with contextlib.redirect_stdout(io.StringIO()):
