@@ -19,6 +19,8 @@ Spec: [design.md](design.md). Rationale: [../DECISIONS.md](../DECISIONS.md).
 - **`data/` must never have a git remote.** Any code that touches git in `data/` verifies this.
 - **No personal data in the system repo.** The repo is public (ADR-008).
 - Repo root for all paths below: `my_learning_projects/ideas/brain/`.
+- **Every file read goes through `read_text_safe(path)`** (added in Task 4). Never call `path.read_text()` directly in a code path reachable from a command. `UnicodeDecodeError` is a `ValueError`, not an `OSError` — `except OSError` does not catch a file with a bad byte in it, and that crashes the briefing. One guard, all callers.
+- **Anything parsed from disk is shape-checked before use.** Valid JSON is not necessarily the expected type: `json.loads` on `42` succeeds and then `.get()` raises. Validate `isinstance(..., dict)` before treating a parsed value as a mapping.
 - **`selftest` output stays pristine.** Every `cmd_*` prints to stdout. A test that calls one directly must wrap the call in `selftest._silent(...)` (added in Task 2) so briefing text never interleaves with pass/fail lines. Applies to `cmd_init`, `cmd_due`, `cmd_graph`, `cmd_migrate`, `cmd_decay`, `cmd_bootstrap`.
 - Commit after every task. Conventional commit prefixes: `feat:`, `test:`, `docs:`, `fix:`.
 
@@ -1478,9 +1480,12 @@ def build_graph(config, root=ROOT):
 
     if notes_dir.is_dir():
         for path in sorted(notes_dir.glob("*.md")):
+            text = read_text_safe(path)
+            if text is None:
+                continue
             try:
-                _, body = parse_frontmatter(path.read_text(encoding="utf-8"))
-            except (FrontmatterError, OSError) as exc:
+                _, body = parse_frontmatter(text)
+            except FrontmatterError as exc:
                 warn("%s: %s - skipped" % (path.name, exc))
                 continue
             node = path.stem
@@ -1821,10 +1826,8 @@ def decay_actions(config, root=ROOT):
             actions.append("mastered: %s leaves the review rotation" % skill["slug"])
 
     path = root / config["paths"]["data"] / "questions.md"
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        lines = []
+    text = read_text_safe(path)
+    lines = text.splitlines() if text else []
     for line in lines:
         if not line.startswith("- "):
             continue
@@ -1839,9 +1842,12 @@ def decay_actions(config, root=ROOT):
         if kind != "note" or adj.get(node):
             continue
         note_path = notes_dir / (node + ".md")
+        text = read_text_safe(note_path)
+        if text is None:
+            continue
         try:
-            meta, _ = parse_frontmatter(note_path.read_text(encoding="utf-8"))
-        except (FrontmatterError, OSError):
+            meta, _ = parse_frontmatter(text)
+        except FrontmatterError:
             continue
         created = parse_date(meta.get("created"))
         if created and (now - created).days > policy["orphan_archive_days"]:
