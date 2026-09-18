@@ -243,7 +243,7 @@ was about to happen. Not your knowledge — that's already on disk.
 | Cursor | `AGENTS.md` (native) | `.cursor/commands/` |
 | Claude Code | `CLAUDE.md` → `@AGENTS.md` | `.claude/commands/` |
 | GitHub Copilot | `.github/copilot-instructions.md` | `.github/prompts/` |
-| Gemini CLI | `GEMINI.md` | `.gemini/commands/` |
+| Gemini CLI | `GEMINI.md` | — (type `start` / `end`) |
 
 `AGENTS.md` is the single source of truth. Every other file is a one-line pointer to
 it, so there is nothing to keep in sync.
