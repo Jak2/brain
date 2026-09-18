@@ -1,5 +1,7 @@
 """Self-checks for brain.py. Run: python brain.py selftest"""
+import contextlib
 import datetime
+import io
 import shutil
 import tempfile
 import traceback
@@ -73,6 +75,12 @@ def test_load_config_merges_defaults():
     assert config["paths"]["notes"] == "data/notes", config["paths"]
 
 
+def _silent(fn, *args, **kwargs):
+    """Call a cmd_* function with stdout captured, so selftest output stays pristine."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        return fn(*args, **kwargs)
+
+
 def _tmp_root():
     """A temp dir containing a copy of config.json, cleaned up by the caller."""
     root = Path(tempfile.mkdtemp(prefix="brain-test-"))
@@ -84,7 +92,7 @@ def test_init_creates_tree_and_is_idempotent():
     root = _tmp_root()
     try:
         config = brain.load_config()
-        assert brain.cmd_init(config, root) == 0
+        assert _silent(brain.cmd_init, config, root) == 0
         data = root / "data"
         for sub in ("notes", "skills", "log", "local"):
             assert (data / sub).is_dir(), "missing " + sub
@@ -94,7 +102,7 @@ def test_init_creates_tree_and_is_idempotent():
         assert (data / ".gitignore").read_text(encoding="utf-8").strip() == "local/"
 
         (data / "target.md").write_text("EDITED", encoding="utf-8")
-        assert brain.cmd_init(config, root) == 0, "second run must succeed"
+        assert _silent(brain.cmd_init, config, root) == 0, "second run must succeed"
         assert (data / "target.md").read_text(encoding="utf-8") == "EDITED", \
             "init must never overwrite existing content"
     finally:
@@ -104,7 +112,7 @@ def test_init_creates_tree_and_is_idempotent():
 def test_init_data_repo_has_no_remote():
     root = _tmp_root()
     try:
-        brain.cmd_init(brain.load_config(), root)
+        _silent(brain.cmd_init, brain.load_config(), root)
         data = root / "data"
         assert data.is_dir(), "init must create data/ whether or not git exists"
         if (data / ".git").exists():
@@ -119,7 +127,7 @@ def test_init_data_repo_has_no_remote():
 def test_init_writes_valid_state_json():
     root = _tmp_root()
     try:
-        brain.cmd_init(brain.load_config(), root)
+        _silent(brain.cmd_init, brain.load_config(), root)
         import json as _json
         state = _json.loads((root / "data" / "state.json").read_text(encoding="utf-8"))
         assert state["in_flight"] is None, state
