@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "paths": {
+    "data": "data",
+    "notes": "data/notes",
+    "skills": "data/skills",
+    "log": "data/log",
+    "local": "data/local"
+  },
+  "policy": {
+    "intervals_days": [1, 3, 7, 16, 35],
+    "mastery_level": 5,
+    "question_expiry_days": 60,
+    "orphan_archive_days": 90,
+    "graph_min_notes": 30,
+    "daily_items": 3
+  },
+  "assistants": []
+}
