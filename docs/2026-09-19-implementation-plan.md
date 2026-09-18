@@ -19,6 +19,7 @@ Spec: [design.md](design.md). Rationale: [../DECISIONS.md](../DECISIONS.md).
 - **`data/` must never have a git remote.** Any code that touches git in `data/` verifies this.
 - **No personal data in the system repo.** The repo is public (ADR-008).
 - Repo root for all paths below: `my_learning_projects/ideas/brain/`.
+- **`selftest` output stays pristine.** Every `cmd_*` prints to stdout. A test that calls one directly must wrap the call in `selftest._silent(...)` (added in Task 2) so briefing text never interleaves with pass/fail lines. Applies to `cmd_init`, `cmd_due`, `cmd_graph`, `cmd_migrate`, `cmd_decay`, `cmd_bootstrap`.
 - Commit after every task. Conventional commit prefixes: `feat:`, `test:`, `docs:`, `fix:`.
 
 ## File Structure
