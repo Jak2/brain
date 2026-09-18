@@ -86,6 +86,19 @@ def parse_frontmatter(text):
     return meta, parts[2].lstrip("\n")
 
 
+def read_text_safe(path):
+    """File contents, or None if unreadable for any reason. Never raises.
+
+    UnicodeDecodeError is a ValueError, not an OSError - a single bad byte in a
+    note must not take down the briefing.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        warn("%s: %s - skipped" % (path.name, exc))
+        return None
+
+
 def today():
     return datetime.date.today()
 
@@ -149,9 +162,12 @@ def read_skills(config, root=ROOT):
     if not folder.is_dir():
         return skills
     for path in sorted(folder.glob("*.md")):
+        text = read_text_safe(path)
+        if text is None:
+            continue
         try:
-            meta, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
-        except (FrontmatterError, OSError) as exc:
+            meta, _ = parse_frontmatter(text)
+        except FrontmatterError as exc:
             warn("%s: %s - skipped" % (path.name, exc))
             continue
         meta["path"] = path
@@ -178,19 +194,19 @@ def due_skills(skills, config, when):
 
 
 def read_state(config, root=ROOT):
+    default = {"schema": 1, "in_flight": None, "bootstrapped": []}
     path = root / config["paths"]["data"] / "state.json"
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        state = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {"schema": 1, "in_flight": None, "bootstrapped": []}
+        return default
+    return state if isinstance(state, dict) else default
 
 
 def _open_questions(config, root):
     path = root / config["paths"]["data"] / "questions.md"
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
+    text = read_text_safe(path)
+    lines = text.splitlines() if text else []
     return [line[2:].strip() for line in lines if line.startswith("- ")]
 
 
@@ -205,6 +221,8 @@ def cmd_due(config, root=ROOT):
 
     state = read_state(config, root)
     flight = state.get("in_flight")
+    if not isinstance(flight, dict):
+        flight = None
     if flight:
         print("interrupted: %s/%s (%s attempts, opened %s)" % (
             flight.get("persona", "?"), flight.get("skill", "?"),

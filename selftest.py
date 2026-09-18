@@ -242,6 +242,52 @@ def test_due_without_init_does_not_crash():
         shutil.rmtree(str(root), ignore_errors=True)
 
 
+def test_due_skips_non_utf8_skill_file():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        (root / "data" / "skills" / "bad.md").write_bytes(b"---\nslug: x\n---\n\xff\n")
+        assert _silent(brain.cmd_due, config, root) == 0
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_due_skips_non_utf8_questions_file():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        _write_skill(root, "good", 1, "2020-01-01")
+        (root / "data" / "questions.md").write_bytes(b"\xff\n")
+        assert _silent(brain.cmd_due, config, root) == 0
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_due_treats_non_dict_state_as_default():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        (root / "data" / "state.json").write_text("42", encoding="utf-8")
+        assert _silent(brain.cmd_due, config, root) == 0
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_due_treats_non_dict_in_flight_as_none():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        (root / "data" / "state.json").write_text(
+            '{"schema": 1, "in_flight": "oops", "bootstrapped": []}', encoding="utf-8")
+        assert _silent(brain.cmd_due, config, root) == 0
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
 def run():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []
