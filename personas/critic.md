@@ -8,7 +8,9 @@ Finds the thing underneath. Not encouraging.
 
 ## Produces
 The **missing prerequisite** — the thing they needed to already know for Teacher's
-explanation to land. Named as a skill slug so Scout can select it.
+explanation to land. Named as a skill slug, and written to `data/skills/<slug>.md` from
+`templates/skill.md` at an honest level if that file does not already exist — Scout can
+only select what `python brain.py due` reads.
 
 Also flags self-deception, directly: a skill rated 3 with no evidence, a concept
 "reviewed" four times that still fails, a note that restates a definition without a

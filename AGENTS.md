@@ -12,8 +12,12 @@ New here? Read `BOOTSTRAP.md` first.
 2. **Never write to the system repo.** Everything you produce goes in `data/`.
 3. **Split every capture.** The generalized concept goes to `data/notes/`, employer-free.
    Ticket IDs, internal service names, their code go to `data/local/`. Never mix them.
-4. **Folder names live in `config.json`.** Never hardcode a path. To rename a folder,
-   edit `config.json` then run `python brain.py migrate`.
+   The same rule covers `data/log/` and `data/HANDOVER.md` — both are written every
+   session and must stay just as employer-free as `notes/`.
+4. **Folder names live in `config.json`.** Never hardcode a path — except `data` itself:
+   `paths.data` is pinned to `data` and can never be renamed, so a literal `data` is not
+   a violation of this rule. To rename `notes`, `skills`, or `log`, edit `config.json`
+   then run `python brain.py migrate`.
 5. **Every note carries at least one `[[link]]`.** A note that connects to nothing is not
    knowledge yet. Say so out loud instead of filing it.
 6. **One concept per note.** A session log is not a note.
@@ -22,20 +26,24 @@ New here? Read `BOOTSTRAP.md` first.
 
 **`/start`** (or the word `start`)
 
-1. Run `python brain.py due`.
-2. If `interrupted:` appears, resume that persona and skill first. Do not select new work.
-3. If the brain is empty, run the cold-start interview in `templates/interview.md`.
-4. Otherwise enter the workflow graph at `assess`.
+1. Run `python brain.py due` and `python brain.py graph`.
+2. Set `last_start` to today's date in `data/state.json`.
+3. If `interrupted:` appears, resume that persona and skill first. Do not select new work.
+4. If the brain is empty, run the cold-start interview in `templates/interview.md`.
+5. Otherwise enter the workflow graph at `assess`. Give Scout the `graph` output too —
+   below `graph_min_notes` notes it only prints counts (no frontier), which is by design,
+   not a bug; Scout falls back to its next preference.
 
 **`/end`** (or the word `end`)
 
 1. Scribe writes the notes and the `data/local/` split.
-2. Update `level`, `last_reviewed`, `next_review`, `interval_days`, `evidence` in each
-   touched `data/skills/*.md`. Intervals are `1, 3, 7, 16, 35` — advance one on pass,
-   back one on fail.
-3. Append `data/log/YYYY-MM-DD.md`.
+2. For each touched skill, update `level` (per Examiner's verdict) and `evidence` in
+   `data/skills/<slug>.md`, then run `python brain.py schedule <slug> pass|fail`. That
+   command writes `interval_days`, `last_reviewed`, and `next_review` — never compute
+   those by hand (rule 1).
+3. Append `data/log/YYYY-MM-DD.md` from `templates/log.md`.
 4. Rewrite `data/HANDOVER.md` with in-flight state, or "Nothing in flight."
-5. Set `in_flight` to `null` in `data/state.json`.
+5. Set `in_flight` to `null` and `last_end` to today in `data/state.json`.
 6. `git -C data add -A && git -C data commit -m "<what was learned>"`.
 7. Never `git push`. `data/` has no remote by design.
 
@@ -50,9 +58,16 @@ New here? Read `BOOTSTRAP.md` first.
 | capture | [Scribe](personas/scribe.md) | schedule | — |
 | schedule | *(brain.py)* | end | — |
 
+**Before Teacher begins** — first attempt or a resume — write `in_flight` to
+`data/state.json`: `{"persona": "teacher", "skill": "<slug>", "attempts": N, "opened":
+"<ISO timestamp>"}`. Each re-teach (a fail routed back to Teacher) updates `attempts` in
+place; `opened` does not change. `/end` clears it back to `null`.
+
 **At `attempts >= 3`, go to [Critic](personas/critic.md), not Teacher.** Three failures
-is a missing prerequisite, not a bad explanation. Critic names it, Scout re-selects, and
-the failed attempts are recorded as evidence of the real gap.
+is a missing prerequisite, not a bad explanation. Critic names it as a skill slug and
+creates `data/skills/<slug>.md` from `templates/skill.md` at an honest level if it does
+not already exist — Scout selects only from what `python brain.py due` reads, which is
+`data/skills/*.md`, so the file must exist there before Scout can re-select it.
 
 [Archivist](personas/archivist.md) runs outside the loop, on request or when
 `python brain.py graph` reports orphans.

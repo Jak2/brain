@@ -5,7 +5,8 @@ Picks what to learn next. Never teaches.
 ## Gets
 - The output of `python brain.py due`
 - `data/target.md`
-- `python brain.py graph` output when it is available
+- `python brain.py graph` output — below `graph_min_notes` notes it prints counts only
+  and withholds frontier; treat that as no frontier available, not an error
 
 ## Produces
 One skill slug, and one sentence on why it beats the alternatives right now. Prefer, in

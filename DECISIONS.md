@@ -460,3 +460,82 @@ while testing nothing.
 failed is not evidence of correctness until you have watched it fail on purpose. This
 one was caught only because a reviewer questioned a passing check instead of recording
 the pass.
+
+---
+
+## ADR-026 — `paths.data` and `paths.local` are pinned to their defaults
+
+**Date:** 2026-09-19 · **Status:** Accepted · **Amends:** ADR-005
+
+`config.json`'s `paths.data` and `paths.local` can no longer be changed. A non-default
+value warns and falls back to the default. `notes`, `skills`, and `log` stay renameable,
+same as before.
+
+**Why.** ADR-005 promised every folder was renameable. That promise was too wide: the
+outer repo's `.gitignore` matches the literal string `data/`, and `cmd_init` hardcodes
+the literal string `local/` into `data/.gitignore`. Renaming `paths.data` moves the
+entire brain — `local/` included — out from under the outer `.gitignore` and into the
+public, pushable repo. Renaming `paths.local` alone drops the inner ignore layer the same
+way, even with `data/` left at its default.
+
+**Rejected:** teaching `.gitignore`, `cmd_init`, and `cmd_migrate` about an arbitrary
+data root and local folder, so both stay fully renameable. Correct in principle, but a
+bigger and riskier change than the problem justified — three more places would need to
+agree on a path that, if any one of them lagged, would silently leak private notes into
+a public repo. Pinning the two names that the ignore layers hardcode is the smaller,
+safer fix, and it costs nothing: nobody had a reason to rename the data root itself.
+
+---
+
+## ADR-027 — Scheduling moved into `brain.py schedule`
+
+**Date:** 2026-09-19 · **Status:** Accepted
+
+`python brain.py schedule <slug> pass|fail` computes the next `interval_days` from the
+fixed table, sets `last_reviewed` to today, and writes `next_review`, directly to the
+skill file. It is the only command that writes to `data/skills/*.md`.
+
+**Why.** The design always said date arithmetic must not be the LLM's job (§2, "the
+assistant decides language, never dates or scheduling"), but no command existed to do it
+on the assistant's behalf, so `AGENTS.md` handed the assistant the interval table
+directly and asked it to apply it by hand — the exact thing the design forbade.
+`next_interval` was already implemented and tested in `selftest.py`, with no caller
+anywhere in `brain.py` outside the test suite. Wiring it to a subcommand closes the gap
+between what was built and what was used.
+
+**Rejected:** leaving the interval table in `AGENTS.md` and trusting the assistant to
+apply it correctly every time. Works until it doesn't — a single off-by-one on the
+interval table silently corrupts a review schedule, and nothing would catch it.
+
+---
+
+## ADR-028 — The four read-but-never-written fields
+
+**Date:** 2026-09-19 · **Status:** Accepted
+
+A final whole-branch review found four places `brain.py` parses and reports on, that no
+shipped instruction ever told an assistant to create: `state.json`'s `in_flight` (and
+`last_start`/`last_end`), `data/questions.md`, a skill file named by Critic but never
+written to disk, and `python brain.py graph`'s output, which nothing in the loop ever
+ran. Each is now given an explicit owner in `AGENTS.md` or a persona file.
+
+**Why record the class, not just the four fixes.** Each instance passed review alone —
+the code that reads a field is correct, and the docs that describe the field are
+accurate. The defect only exists in the gap between the two, and a reviewer looking at
+either half separately has nothing to trip on. `cmd_due` correctly prints `interrupted:`
+from `in_flight`; nothing in `AGENTS.md` was wrong about *how* to resume it; the only
+thing missing was any instruction that ever set it in the first place. Same shape for
+the other three.
+
+**What would catch it next time.** Per-field or per-file traceability: for every field a
+command reads from `data/`, name the instruction that writes it, in one place, and treat
+a field with no listed writer as a bug regardless of how correct the reader and the
+prose describing it both are. This review's own final step — reading `AGENTS.md`
+end-to-end and building that table — is the check; it should run again after any change
+that adds a new field to `state.json`, a new template, or a new `brain.py` reader.
+
+**Rejected:** trusting that a persona's `Produces` section implies someone writes the
+things a sibling `Gets` section reads. It doesn't — `Produces` and `Gets` are contracts
+between personas in the same loop, not a registry of every file `brain.py` touches, and
+none of the four gaps here were between two personas in one loop; they were between the
+engine and the entire protocol.

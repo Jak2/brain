@@ -63,7 +63,7 @@ brain/                          public system repo
   brain.py
   config.json
   personas/{scout,teacher,examiner,scribe,critic,archivist}.md
-  templates/{note,skill,log,handover,target}.md
+  templates/{note,skill,log,interview}.md
   adapters/
     claude/{CLAUDE.md,commands/{start,end}.md}
     cursor/commands/{start,end}.md
@@ -78,6 +78,10 @@ brain/                          public system repo
     local/                      gitignored inside data/ as well
     .gitignore                  -> local/
 ```
+
+`target.md`, `HANDOVER.md`, and `questions.md` are not templates — `cmd_init` writes
+their starting content from the `STARTER` dict in `brain.py` directly. Only `note.md`,
+`skill.md`, `log.md`, and `interview.md` live in `templates/`.
 
 ## 4. File formats
 
@@ -149,13 +153,14 @@ unjustifiable complexity at this scale.
     "skill": "python-async",
     "attempts": 1,
     "opened": "2026-09-19T14:02:00"
-  },
-  "bootstrapped": ["cursor", "claude"]
+  }
 }
 ```
 
 `in_flight` is `null` when clean. A non-null value on `/start` means the previous
-session was interrupted — resume it before selecting anything new (ADR-017).
+session was interrupted — resume it before selecting anything new (ADR-017). There is no
+`bootstrapped` field — which assistants are installed lives in `config.json.assistants`,
+written by `cmd_bootstrap`, not in `state.json`.
 
 ### 4.4 `config.json` — the only file bootstrap edits
 
@@ -178,12 +183,16 @@ session was interrupted — resume it before selecting anything new (ADR-017).
 }
 ```
 
-Renaming a folder = edit `paths`, run `brain.py migrate` (ADR-005).
+Renaming a folder = edit `paths`, run `brain.py migrate` (ADR-005) — except `paths.data`
+and `paths.local`, which are pinned to `"data"` and `"data/local"`. A different value
+there warns and falls back to the default (ADR-026).
 
 ## 5. `brain.py`
 
-Standard library only. `pathlib`, `json`, `datetime`, `re`, `argparse`, `subprocess`
-(git), `shutil`. No third-party imports, ever.
+Standard library only. `pathlib` (`Path`, `PurePosixPath`, `PureWindowsPath`), `json`,
+`datetime`, `re`, `argparse`, `subprocess` (git). No third-party imports, ever.
+`selftest.py` additionally uses `shutil`, `tempfile`, `contextlib`, `io`, and
+`traceback` for fixtures — `brain.py` itself does not import any of them.
 
 | Subcommand | Does |
 |---|---|
@@ -191,7 +200,9 @@ Standard library only. `pathlib`, `json`, `datetime`, `re`, `argparse`, `subproc
 | `bootstrap <assistant>` | Copy `adapters/<assistant>/` into place. Append to `config.json.assistants`. **Never deletes.** Idempotent. |
 | `due` | Print the briefing: overdue reviews, top gap, oldest open question, interrupted session. |
 | `graph` | Orphans, hubs, frontier, bridges. Below `graph_min_notes`, prints note count only. |
-| `migrate` | Move folders per changed `paths`, rewrite `[[links]]`, `git mv` to preserve history. |
+| `migrate` | Move folders per changed `paths`, `git mv` to preserve history, then **verify** `[[links]]` still resolve (it does not rewrite them — link targets are file stems, so a folder move never changes them). |
+| `decay` | List what should leave the system: mastered skills, expired questions, orphan-archive candidates. Never deletes. |
+| `schedule <slug> pass\|fail` | Compute the next `interval_days` from the fixed table, set `last_reviewed`/`next_review`, write it back. The only command that writes a skill file. |
 | `selftest` | Assertions against temp fixtures. Exit non-zero on failure. |
 
 ### 5.1 `due` output
@@ -200,12 +211,16 @@ Machine-written, assistant-read. Stable format so the assistant can rely on it:
 
 ```
 BRIEFING 2026-09-19
-interrupted: teacher/python-async (1 attempt, opened 14:02 yesterday)
+interrupted: teacher/python-async (1 attempts, opened 2026-09-19T14:02:00)
 due: python-async(L2, 3d overdue), sql-indexes(L1, due today)
-gap: distributed-tracing (L0, target L3, blocks 2 target-role items)
-question: "why does our retry storm only happen on deploy?" (open 12d)
-orphans: 2
+gap: distributed-tracing (L0, target L3)
+question: 2026-09-07 why does our retry storm only happen on deploy?
+decay: 2 pending - run: python brain.py decay
 ```
+
+`orphans` is not a `due` field — it belongs to `python brain.py graph`, which `AGENTS.md`
+has `/start` run alongside `due` so the frontier actually reaches Scout. `due` only ever
+reports the decay *count*; the items themselves come from `python brain.py decay`.
 
 ### 5.2 Graph metrics
 
@@ -279,7 +294,7 @@ produce malformed output.
 | `config.json` unparseable | Fall back to built-in defaults, warn loudly |
 | Broken `[[link]]` target | Report in `graph` as broken, not as orphan |
 | Git absent or failing | Every git call is best-effort; the system works without git |
-| `data/` has a remote | `init` and `due` both **warn prominently** — ADR-007's guarantee is void |
+| `data/` has a remote | `init` **warns prominently** — ADR-007's guarantee is void. `due` does not check on every briefing: `README.md` tells users they may deliberately add their own private remote on a personal machine, and a warning on every session would punish that legitimate choice. A one-time check at `init` is the honest place for it. |
 | Bad date in frontmatter | Treat as "due now", warn. Never crash the briefing. |
 
 **Nothing in `brain.py` may raise an unhandled exception during `/start`.** A briefing
@@ -290,7 +305,8 @@ that fails is a system that gets abandoned.
 `python brain.py selftest` — assertions against fixtures built in a temp directory, torn
 down after. No pytest, no fixtures directory, no framework (C2).
 
-Covers:
+67 tests as of this writing (`python brain.py selftest` is the source of truth for the
+current count, not this document). Covers, at minimum:
 
 1. Interval progression and reset on fail
 2. Overdue detection across month and year boundaries
@@ -299,8 +315,19 @@ Covers:
 5. Orphan detection, and broken-link vs orphan distinction
 6. `bootstrap` idempotence — run twice, byte-identical tree
 7. `bootstrap` additivity — install a second adapter, first survives untouched
-8. `migrate` rewrites `[[links]]` and leaves no dangling references
+8. `migrate` verifies `[[links]]` still resolve after a folder move (it does not rewrite
+   them) and refuses a target that collides with an in-progress migration
 9. `init` idempotence, and that it never configures a remote
+10. `schedule` writes `interval_days`, `last_reviewed`, `next_review` and preserves the
+    rest of the file's frontmatter and body
+11. Config shape-checking — a wrong-typed `paths`/`policy` value falls back to its
+    default with a warning instead of reaching a caller
+12. `paths.data` and `paths.local` are pinned to their defaults; `notes`, `skills`, and
+    `log` stay renameable and path-containment-checked
+13. Path traversal and absolute-path rejection under both POSIX and Windows path flavors
+14. A non-string `slug` in a skill file falls back to the filename
+15. A corrupt `state.json` warns and falls back to the default rather than crashing `due`
+16. The no-third-party-import gate itself (ADR-025)
 
 Exit non-zero on any failure. Run after every `brain.py` edit.
 

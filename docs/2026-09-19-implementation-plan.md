@@ -1922,7 +1922,7 @@ git commit -m "feat: cold-start interview and decay drain"
 - [ ] **Step 1: Confirm the whole suite passes**
 
 Run: `python brain.py selftest`
-Expected: `33 passed, 0 failed`, exit 0
+Expected: `67 passed, 0 failed`, exit 0
 
 - [ ] **Step 2: Confirm no third-party imports slipped in**
 

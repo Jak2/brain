@@ -88,8 +88,11 @@ brain/                  <- the system. public. you pull updates. you never write
 
 This split does two jobs at once:
 
-- **The outer repo holds no data**, so `git pull` for system updates is always clean.
-  No conflicts, no stashing, forever.
+- **The outer repo holds no personal data**, so a `git pull` for system updates almost
+  never touches anything you wrote. Not an absolute guarantee — `config.json` is tracked
+  and `bootstrap` writes to it, so an upstream change to that one file can still
+  conflict, and `bootstrap` drops untracked files (`CLAUDE.md`, `.claude/`, `.cursor/`,
+  `.github/`) into the tree. Everything under `data/` is untouched either way.
 - **The inner repo has no remote**, so `git push` fails with *"no configured push
   destination."* Your notes cannot be pushed anywhere by accident.
 
@@ -264,6 +267,7 @@ python brain.py bootstrap <name>  Install that assistant's adapter (additive, id
 python brain.py due               Today's briefing: reviews due, top gap, oldest question
 python brain.py graph             Orphans, broken links, hubs, frontier, bridges
 python brain.py decay             What should leave the system
+python brain.py schedule <slug> pass|fail   Record a review outcome, reschedule the skill
 python brain.py migrate           Move folders to match config.json, verifying links
 python brain.py selftest          Verify date math, parsing, graph metrics, idempotence
 ```
@@ -314,6 +318,12 @@ brain/
 Your `[[links]]` need no rewriting — link targets are file stems, so a folder move
 leaves them all valid, and `migrate` verifies that rather than assuming it.
 
+`notes`, `skills`, and `log` are renameable this way. `data` and `local` are **pinned**
+— renaming either one is rejected with a warning and falls back to the default, because
+the outer `.gitignore` matches the literal string `data/` and `data/.gitignore` matches
+the literal string `local/`; renaming either would silently drop a gitignore layer and
+risk pushing notes into the public repo.
+
 Paths must stay relative, use forward slashes, and live inside your data root. Anything
 else is rejected with a warning and falls back to the default — that rule is what keeps
 your notes inside the repo that has no remote.
@@ -347,7 +357,8 @@ API key is transcription, not redesign.
 **`/start` does nothing** — your assistant may not support slash commands. Type `start`.
 
 **Assistant ignores the rules** — confirm the adapter for *your* tool exists
-(`python brain.py bootstrap`), and that you opened the `brain/` folder itself as the
+(`python brain.py bootstrap <name>` — `claude`, `cursor`, `copilot`, or `gemini`; running
+it with no name exits 2), and that you opened the `brain/` folder itself as the
 workspace root, not a parent directory.
 
 **"No data yet"** — run `python brain.py init`.

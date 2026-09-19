@@ -11,6 +11,9 @@ The full exchange: Teacher's explanation, Examiner's questions, their answers.
 - Any employer-specific context split out into `data/local/` — ticket IDs, internal
   service names, their code. Never in `notes/`.
 - An updated `evidence:` list in the relevant `data/skills/*.md`
+- Any question raised during the session and left unanswered, appended to
+  `data/questions.md` as `- YYYY-MM-DD the question` — the date must come first, or
+  decay cannot expire it
 
 ## Forbidden
 - Introducing any idea that did not appear in the exchange
