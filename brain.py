@@ -6,7 +6,7 @@ import json
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent
 
@@ -39,6 +39,20 @@ def warn(msg):
     print("warn: " + msg, file=sys.stderr)
 
 
+def _unsafe_relpath(value):
+    """True if a paths value is absolute (POSIX or Windows-style) or escapes the
+    repo via a '..' segment.
+
+    Pure-path check only - the target may not exist yet, and Path.resolve()
+    would hit the disk and follow symlinks.
+    """
+    return (
+        PurePosixPath(value).is_absolute()
+        or PureWindowsPath(value).is_absolute()
+        or ".." in PureWindowsPath(value).parts
+    )
+
+
 def load_config():
     """Config merged over defaults. Unreadable config falls back, never raises."""
     path = ROOT / "config.json"
@@ -69,6 +83,15 @@ def load_config():
                 warn("config.json: %s.%r is %s, expected %s - using default" % (
                     section, key, type(config[section][key]).__name__, type(default).__name__))
                 config[section][key] = json.loads(json.dumps(default))
+    # A paths value is hand-edited too, and pathlib silently drops the repo root
+    # when joined with an absolute value - reject that and '..' escapes here so
+    # every command inherits a safe path, not just migrate.
+    for key, default in DEFAULT_CONFIG["paths"].items():
+        value = config["paths"][key]
+        if _unsafe_relpath(value):
+            warn("config.json: paths.%r is not a safe relative path (%r) - using default"
+                 % (key, value))
+            config["paths"][key] = default
     return config
 
 
@@ -429,22 +452,37 @@ def cmd_migrate(config, root=ROOT):
     """Reconcile folders on disk with config.json paths. Prefers `git mv` for history."""
     data = root / config["paths"]["data"]
     moved = 0
+    collision = False
     # Defaults are the only record of where a folder used to live.
     for key, default in DEFAULT_CONFIG["paths"].items():
         if key == "data":
             continue
         target = root / config["paths"][key]
-        if target.exists():
-            continue
         old = root / default
+        if target.exists():
+            # target == old means config still points at the default - normal,
+            # not a collision. Otherwise, if old still holds data, the target
+            # existing is not proof a migration ever completed.
+            if old != target and old.is_dir() and any(old.iterdir()):
+                warn("paths.%s: %s already exists and %s still holds data - "
+                     "not a completed migration, leaving data in place" % (key, target, old))
+                collision = True
+            continue
         if not old.is_dir():
             continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        code, out = git(["mv", str(old), str(target)], data)
-        if code != 0:
-            old.rename(target)  # git absent or path untracked - plain move still works
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            code, out = git(["mv", str(old), str(target)], data)
+            if code != 0:
+                old.rename(target)  # git absent or path untracked - plain move still works
+        except OSError as exc:
+            warn("could not move %s -> %s (%s)" % (old, target, exc))
+            return 1
         print("moved %s -> %s" % (default, config["paths"][key]))
         moved += 1
+
+    if collision:
+        return 1
 
     if not moved:
         print("nothing to migrate - folders already match config.json")

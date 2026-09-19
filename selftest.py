@@ -107,6 +107,21 @@ def test_load_config_partial_config_merges_over_defaults():
     assert config["policy"]["mastery_level"] == 5, "omitted key must keep default"
 
 
+def test_load_config_rejects_absolute_path():
+    config = _load_config_from({"paths": {"notes": "/etc/passwd"}})
+    assert config["paths"]["notes"] == "data/notes", config["paths"]
+
+
+def test_load_config_rejects_path_traversal():
+    config = _load_config_from({"paths": {"notes": "../../escape"}})
+    assert config["paths"]["notes"] == "data/notes", config["paths"]
+
+
+def test_load_config_keeps_legitimate_relative_override():
+    config = _load_config_from({"paths": {"notes": "data/knowledge"}})
+    assert config["paths"]["notes"] == "data/knowledge", config["paths"]
+
+
 PERSONAS = ["scout", "teacher", "examiner", "scribe", "critic", "archivist"]
 PERSONA_SECTIONS = ["## Gets", "## Produces", "## Forbidden", "## Done when"]
 
@@ -471,6 +486,65 @@ def test_migrate_moves_folder_and_keeps_links_resolving():
         _, nodes = brain.build_graph(config, root)
         assert nodes.get("2026-01-02-b") == "note", \
             "links must still resolve after the move, not become broken"
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_migrate_warns_and_fails_on_target_collision():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        (root / "data" / "notes" / "keep.md").write_text("mine\n", encoding="utf-8")
+        (root / "data" / "knowledge").mkdir()  # stray folder already at the target
+
+        config["paths"]["notes"] = "data/knowledge"
+        assert _silent(brain.cmd_migrate, config, root) == 1, \
+            "a target collision must fail the run"
+        assert (root / "data" / "notes" / "keep.md").is_file(), \
+            "the original note must stay put on a collision"
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_migrate_git_mv_preserves_history():
+    if shutil.which("git") is None:
+        print("skip: git not available in this environment - git mv history not verified")
+        return
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        data = root / "data"
+
+        brain.git(["config", "user.email", "test@example.com"], data)
+        brain.git(["config", "user.name", "test"], data)
+        (data / "notes" / "2026-01-01-a.md").write_text(
+            "---\nid: a\nskill: x\ncreated: 2026-01-01\n---\n\nnote body\n",
+            encoding="utf-8")
+        code, out = brain.git(["add", "notes"], data)
+        assert code == 0, out
+        code, out = brain.git(["commit", "-m", "seed"], data)
+        assert code == 0, out
+
+        config["paths"]["notes"] = "data/knowledge"
+        assert _silent(brain.cmd_migrate, config, root) == 0
+        new_path = data / "knowledge" / "2026-01-01-a.md"
+        assert new_path.is_file(), "file must exist at the new path after migrate"
+
+        code, status_out = brain.git(["status", "--short"], data)
+        assert code == 0, status_out
+        assert status_out.startswith("R"), \
+            "expected git mv to stage a rename, got: " + status_out
+
+        code, out = brain.git(["commit", "-m", "migrate"], data)
+        assert code == 0, out
+        code, log_out = brain.git(
+            ["log", "--follow", "--oneline", "--", "knowledge/2026-01-01-a.md"], data)
+        assert code == 0 and log_out.strip(), \
+            "git log --follow must show history at the new path: " + log_out
+        assert "seed" in log_out, \
+            "history must follow through the rename back to the original commit: " + log_out
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
 
