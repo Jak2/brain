@@ -53,6 +53,18 @@ def _unsafe_relpath(value):
     )
 
 
+def _outside_data_root(value, data_value):
+    """True if `value` does not sit strictly inside `data_value`.
+
+    Pure PurePath-parts comparison, same approach as _unsafe_relpath - no
+    filesystem access, and a whole-component compare so "data2" can't pass as
+    inside "data".
+    """
+    parts = PureWindowsPath(value).parts
+    data_parts = PureWindowsPath(data_value).parts
+    return parts[: len(data_parts)] != data_parts or len(parts) <= len(data_parts)
+
+
 def load_config():
     """Config merged over defaults. Unreadable config falls back, never raises."""
     path = ROOT / "config.json"
@@ -86,11 +98,30 @@ def load_config():
     # A paths value is hand-edited too, and pathlib silently drops the repo root
     # when joined with an absolute value - reject that and '..' escapes here so
     # every command inherits a safe path, not just migrate.
+    # data is validated first - every other key's containment check is against
+    # it, so a bad data value must already be replaced by its default below.
+    data_value = config["paths"]["data"]
+    if _unsafe_relpath(data_value):
+        warn("config.json: paths.%r is not a safe relative path (%r) - using default"
+             % ("data", data_value))
+        data_value = DEFAULT_CONFIG["paths"]["data"]
+    config["paths"]["data"] = data_value
+
     for key, default in DEFAULT_CONFIG["paths"].items():
+        if key == "data":
+            continue
         value = config["paths"][key]
         if _unsafe_relpath(value):
             warn("config.json: paths.%r is not a safe relative path (%r) - using default"
                  % (key, value))
+            config["paths"][key] = default
+            continue
+        # data/ is the only unpushable repo (no remote, gitignored in the outer
+        # repo) - anything outside it is one migrate away from leaking notes
+        # into the public repo as tracked files.
+        if _outside_data_root(value, data_value):
+            warn("config.json: paths.%r (%r) is not inside paths.data (%r) - using default"
+                 % (key, value, data_value))
             config["paths"][key] = default
     return config
 

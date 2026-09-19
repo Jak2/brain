@@ -122,6 +122,41 @@ def test_load_config_keeps_legitimate_relative_override():
     assert config["paths"]["notes"] == "data/knowledge", config["paths"]
 
 
+def test_load_config_rejects_path_outside_data_root():
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        config = _load_config_from({"paths": {"notes": "elsewhere"}})
+    assert config["paths"]["notes"] == "data/notes", config["paths"]
+    assert "paths.'notes'" in buf.getvalue(), "must warn: " + buf.getvalue()
+
+
+def test_load_config_rejects_path_equal_to_data_root():
+    config = _load_config_from({"paths": {"notes": "data"}})
+    assert config["paths"]["notes"] == "data/notes", config["paths"]
+
+
+def test_load_config_keeps_paths_under_a_renamed_data_root():
+    config = _load_config_from(
+        {"paths": {"data": "brain-data", "notes": "brain-data/notes"}})
+    assert config["paths"]["data"] == "brain-data", config["paths"]
+    assert config["paths"]["notes"] == "brain-data/notes", config["paths"]
+
+
+def test_load_config_rejects_path_outside_a_renamed_data_root():
+    # notes' value happens to equal its own default ("data/notes"), so a plain
+    # value check can't tell "left untouched" from "rejected and fell back to
+    # the same string" - assert the containment check actually fired instead.
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        config = _load_config_from(
+            {"paths": {"data": "brain-data", "notes": "data/notes"}})
+    assert config["paths"]["data"] == "brain-data", config["paths"]
+    assert config["paths"]["notes"] == "data/notes", \
+        "notes must fall back to its default - it no longer sits under the renamed data root"
+    assert "not inside paths.data" in buf.getvalue(), \
+        "containment check must fire even though the fallback string is unchanged: " + buf.getvalue()
+
+
 PERSONAS = ["scout", "teacher", "examiner", "scribe", "critic", "archivist"]
 PERSONA_SECTIONS = ["## Gets", "## Produces", "## Forbidden", "## Done when"]
 
