@@ -623,6 +623,40 @@ def test_migrate_git_mv_preserves_history():
         shutil.rmtree(str(root), ignore_errors=True)
 
 
+def test_decay_closes_expired_questions():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        (root / "data" / "questions.md").write_text(
+            "# Open questions\n\n- 2020-01-01 ancient and unanswered\n"
+            "- %s asked today\n" % brain.today().isoformat(), encoding="utf-8")
+        actions = brain.decay_actions(config, root)
+        joined = " | ".join(actions)
+        assert "ancient and unanswered" in joined, joined
+        assert "asked today" not in joined, joined
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_decay_flags_mastered_skills_leaving_rotation():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        _write_skill(root, "mastered-thing", 5, "2020-01-01", target_level=5)
+        joined = " | ".join(brain.decay_actions(config, root))
+        assert "mastered-thing" in joined, joined
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_interview_template_has_five_questions():
+    text = (brain.ROOT / "templates" / "interview.md").read_text(encoding="utf-8")
+    for n in range(1, 6):
+        assert ("%d." % n) in text, "interview is missing question %d" % n
+
+
 def run():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

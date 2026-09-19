@@ -457,6 +457,63 @@ def cmd_due(config, root=ROOT):
     questions = _open_questions(config, root)
     if questions:
         print("question: " + questions[0])
+
+    pending = decay_actions(config, root)
+    if pending:
+        print("decay: %d pending - run: python brain.py decay" % len(pending))
+    return 0
+
+
+def decay_actions(config, root=ROOT):
+    """Everything that should leave the system. The drain that keeps the queue finite."""
+    policy = config["policy"]
+    now = today()
+    actions = []
+
+    for skill in read_skills(config, root):
+        if isinstance(skill["level"], int) and skill["level"] >= policy["mastery_level"]:
+            actions.append("mastered: %s leaves the review rotation" % skill["slug"])
+
+    path = root / config["paths"]["data"] / "questions.md"
+    text = read_text_safe(path)
+    lines = text.splitlines() if text else []
+    for line in lines:
+        if not line.startswith("- "):
+            continue
+        head, _, rest = line[2:].strip().partition(" ")
+        asked = parse_date(head)
+        if asked and (now - asked).days > policy["question_expiry_days"]:
+            actions.append("expired question (%dd): %s" % ((now - asked).days, rest))
+
+    adj, nodes = build_graph(config, root)
+    notes_dir = root / config["paths"]["notes"]
+    for node, kind in sorted(nodes.items()):
+        if kind != "note" or adj.get(node):
+            continue
+        note_path = notes_dir / (node + ".md")
+        text = read_text_safe(note_path)
+        if text is None:
+            continue
+        try:
+            meta, _ = parse_frontmatter(text)
+        except FrontmatterError:
+            continue
+        created = parse_date(meta.get("created"))
+        if created and (now - created).days > policy["orphan_archive_days"]:
+            actions.append("archive candidate (orphan %dd): %s"
+                           % ((now - created).days, node))
+    return actions
+
+
+def cmd_decay(config, root=ROOT):
+    actions = decay_actions(config, root)
+    if not actions:
+        print("decay: nothing to drain")
+        return 0
+    print("DECAY %d action(s) - Archivist decides, never delete unasked"
+          % len(actions))
+    for action in actions:
+        print("  " + action)
     return 0
 
 
@@ -591,6 +648,7 @@ def build_parser():
     sub.add_parser("due", help="today's briefing")
     sub.add_parser("graph", help="orphans, hubs, frontier, bridges")
     sub.add_parser("migrate", help="reconcile folders with config.json paths")
+    sub.add_parser("decay", help="what should leave the system")
     boot = sub.add_parser("bootstrap", help="install one assistant's adapter")
     boot.add_argument("assistant", choices=ASSISTANTS)
     return parser
@@ -609,6 +667,8 @@ def main(argv=None):
         return cmd_graph(load_config())
     if args.command == "migrate":
         return cmd_migrate(load_config())
+    if args.command == "decay":
+        return cmd_decay(load_config())
     if args.command == "bootstrap":
         return cmd_bootstrap(args.assistant, load_config())
     return 0
