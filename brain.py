@@ -43,6 +43,13 @@ def _unsafe_relpath(value):
     """True if a paths value is absolute (POSIX or Windows-style) or escapes the
     repo via a '..' segment.
 
+    is_absolute() is checked under both flavors - each catches an absolute form
+    the other doesn't ("/etc/passwd" is only absolute under PurePosixPath,
+    "C:\\foo" only under PureWindowsPath). The '..' check only needs
+    PureWindowsPath: it splits on '\\' and '/', a superset of PurePosixPath's
+    '/'-only split, so any '..' component PurePosixPath would find,
+    PureWindowsPath finds too - confirmed for mixed separators like "a\\../b".
+
     Pure-path check only - the target may not exist yet, and Path.resolve()
     would hit the disk and follow symlinks.
     """
@@ -56,13 +63,25 @@ def _unsafe_relpath(value):
 def _outside_data_root(value, data_value):
     """True if `value` does not sit strictly inside `data_value`.
 
+    Checked under both PurePosixPath and PureWindowsPath - the real join
+    later uses the platform-native Path (PurePosixPath on Linux/macOS,
+    PureWindowsPath on Windows), and the two flavors split a string like
+    "data\\sibling" differently (Windows treats '\\' as a separator, POSIX
+    doesn't). Checking one flavor only lets a value that is in-bounds under
+    that flavor slip past while landing outside the root under the other -
+    exactly the asymmetry that made the backslash bypass possible. A value
+    must be contained under both to be accepted.
+
     Pure PurePath-parts comparison, same approach as _unsafe_relpath - no
     filesystem access, and a whole-component compare so "data2" can't pass as
     inside "data".
     """
-    parts = PureWindowsPath(value).parts
-    data_parts = PureWindowsPath(data_value).parts
-    return parts[: len(data_parts)] != data_parts or len(parts) <= len(data_parts)
+    def outside(flavor):
+        parts = flavor(value).parts
+        data_parts = flavor(data_value).parts
+        return parts[: len(data_parts)] != data_parts or len(parts) <= len(data_parts)
+
+    return outside(PurePosixPath) or outside(PureWindowsPath)
 
 
 def load_config():
@@ -120,7 +139,8 @@ def load_config():
         # repo) - anything outside it is one migrate away from leaking notes
         # into the public repo as tracked files.
         if _outside_data_root(value, data_value):
-            warn("config.json: paths.%r (%r) is not inside paths.data (%r) - using default"
+            warn("config.json: paths.%r (%r) is not inside paths.data (%r) under both "
+                 "path flavors - use forward slashes ('/'), not backslashes - using default"
                  % (key, value, data_value))
             config["paths"][key] = default
     return config

@@ -157,6 +157,45 @@ def test_load_config_rejects_path_outside_a_renamed_data_root():
         "containment check must fire even though the fallback string is unchanged: " + buf.getvalue()
 
 
+def test_load_config_rejects_backslash_path_outside_data_root():
+    # PureWindowsPath splits on '\' as well as '/', so "data\sibling" reads as
+    # in-bounds if only PureWindowsPath is consulted. The real join uses the
+    # platform-native Path (PurePosixPath on Linux/macOS), which treats the
+    # whole string as one opaque component - a sibling of data/, not a child.
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        config = _load_config_from({"paths": {"notes": "data\\sibling"}})
+    assert config["paths"]["notes"] == "data/notes", config["paths"]
+    assert "not inside paths.data" in buf.getvalue(), \
+        "must warn and reject the backslash escape: " + buf.getvalue()
+
+
+def test_load_config_rejects_backslash_path_even_when_value_looks_safe():
+    # "data\notes" falls back to "data/notes" - which is also the default -
+    # so a bare value assertion would pass whether this was rejected or
+    # accidentally accepted. Assert on the warning instead: the same trap a
+    # value-only assertion hit in the previous review round.
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        config = _load_config_from({"paths": {"notes": "data\\notes"}})
+    assert config["paths"]["notes"] == "data/notes", config["paths"]
+    assert "not inside paths.data" in buf.getvalue(), \
+        "backslash values must be rejected even though the fallback string coincides: " \
+        + buf.getvalue()
+
+
+def test_load_config_accepts_deep_forward_slash_path_under_data_root():
+    config = _load_config_from({"paths": {"notes": "data/notes/deep"}})
+    assert config["paths"]["notes"] == "data/notes/deep", config["paths"]
+
+
+def test_load_config_accepts_renamed_root_with_forward_slash_notes():
+    config = _load_config_from(
+        {"paths": {"data": "brain-data", "notes": "brain-data/notes"}})
+    assert config["paths"]["data"] == "brain-data", config["paths"]
+    assert config["paths"]["notes"] == "brain-data/notes", config["paths"]
+
+
 PERSONAS = ["scout", "teacher", "examiner", "scribe", "critic", "archivist"]
 PERSONA_SECTIONS = ["## Gets", "## Produces", "## Forbidden", "## Done when"]
 
