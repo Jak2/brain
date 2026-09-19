@@ -1892,7 +1892,7 @@ Dispatch in `main`:
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `python brain.py selftest`
-Expected: `33 passed, 0 failed`
+Expected: `70 passed, 0 failed`, exit 0, and **zero bytes on stderr**
 
 - [ ] **Step 6: Full manual walkthrough**
 

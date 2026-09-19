@@ -440,7 +440,7 @@ def test_due_treats_non_dict_in_flight_as_none():
         config = brain.load_config()
         _silent(brain.cmd_init, config, root)
         (root / "data" / "state.json").write_text(
-            '{"schema": 1, "in_flight": "oops", "bootstrapped": []}', encoding="utf-8")
+            '{"schema": 1, "in_flight": "oops"}', encoding="utf-8")
         assert _silent(brain.cmd_due, config, root) == 0
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
