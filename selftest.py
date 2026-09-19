@@ -75,6 +75,38 @@ def test_load_config_merges_defaults():
     assert config["paths"]["notes"] == "data/notes", config["paths"]
 
 
+def _load_config_from(loaded):
+    """load_config() as if config.json on disk held `loaded`. Never leaves brain.ROOT
+    monkeypatched - restores it even if load_config() raises."""
+    import json as _json
+    root = Path(tempfile.mkdtemp(prefix="brain-test-"))
+    original_root = brain.ROOT
+    try:
+        (root / "config.json").write_text(_json.dumps(loaded), encoding="utf-8")
+        brain.ROOT = root
+        return brain.load_config()
+    finally:
+        brain.ROOT = original_root
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_load_config_falls_back_for_non_list_assistants():
+    config = _load_config_from({"assistants": "oops"})
+    assert config["assistants"] == [], config["assistants"]
+
+
+def test_load_config_falls_back_for_non_dict_policy():
+    config = _load_config_from({"policy": "oops"})
+    assert config["policy"]["mastery_level"] == 5, config["policy"]
+    assert config["policy"]["daily_items"] == 3, config["policy"]
+
+
+def test_load_config_partial_config_merges_over_defaults():
+    config = _load_config_from({"policy": {"daily_items": 7}})
+    assert config["policy"]["daily_items"] == 7, "override must apply"
+    assert config["policy"]["mastery_level"] == 5, "omitted key must keep default"
+
+
 PERSONAS = ["scout", "teacher", "examiner", "scribe", "critic", "archivist"]
 PERSONA_SECTIONS = ["## Gets", "## Produces", "## Forbidden", "## Done when"]
 

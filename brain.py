@@ -55,6 +55,12 @@ def load_config():
             config[key].update(value)
         else:
             config[key] = value
+    # config.json is hand-edited; a wrong-shaped value must not reach any caller.
+    for key, default in DEFAULT_CONFIG.items():
+        if type(config[key]) is not type(default):
+            warn("config.json: %r is %s, expected %s - using default" % (
+                key, type(config[key]).__name__, type(default).__name__))
+            config[key] = json.loads(json.dumps(default))
     return config
 
 
@@ -315,7 +321,7 @@ def cmd_bootstrap(assistant, config, root=ROOT):
         target = root / item.relative_to(source)
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists() and target.read_bytes() == item.read_bytes():
-            continue  # already current - idempotent, and never clobbers an edit
+            continue  # unchanged, skip - an edited file is overwritten below to match source
         target.write_bytes(item.read_bytes())
         installed += 1
 
