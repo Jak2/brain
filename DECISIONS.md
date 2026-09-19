@@ -416,3 +416,47 @@ any machine can verify it in one command, offline.
 **Kept separate from `brain.py`** so the engine stays readable. Not deleted from the
 distribution: this tool is meant to be modified by its users, and `selftest` is what
 makes that safe.
+
+---
+
+## ADR-024 — Persona isolation is instructed, not enforced
+
+**Date:** 2026-09-19 · **Status:** Accepted · **Amends:** ADR-013
+
+All six personas run sequentially in one conversation, on every assistant. No shipped
+file asks any assistant to run a persona in a separate context.
+
+**Why this is recorded as a correction.** ADR-013 claimed that on an assistant with real
+subagents each persona would get its own context and the isolation would be *enforced*,
+degrading to *instructed* elsewhere. Final verification searched every shipped file —
+`AGENTS.md`, `personas/`, `adapters/`, `BOOTSTRAP.md` — for any instruction to that
+effect and found none. The only place the claim existed was the README describing it.
+
+**What it costs.** Examiner is told not to use Teacher's reasoning, but it has read it.
+An instruction to ignore what you just read is weaker than never having read it, so the
+test is not as independent as the design wants.
+
+**Left unbuilt deliberately.** Adding it means per-assistant subagent wiring, which is
+exactly the tool-specific complexity the adapter design exists to avoid. The honest
+position is a documented limitation rather than a claim nothing implements.
+
+---
+
+## ADR-025 — The dependency check matches module names, not whole lines
+
+**Date:** 2026-09-19 · **Status:** Accepted
+
+The no-third-party-imports gate extracts each imported module name and matches it
+against an allow-list with `grep -vx`.
+
+**Why.** The original check piped `grep -nE '^\s*(import|from) ' brain.py selftest.py`
+into a second grep whose allow-list contained `brain` and `selftest`. Every output line
+is prefixed with its own filename, so the filename alone satisfied the exclude pattern
+and **every line passed regardless of what was imported**. `import requests` in
+`brain.py` would have produced a clean run. The gate had been green for the whole build
+while testing nothing.
+
+**The general lesson, worth more than the fix:** a verification step that has never
+failed is not evidence of correctness until you have watched it fail on purpose. This
+one was caught only because a reviewer questioned a passing check instead of recording
+the pass.

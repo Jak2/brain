@@ -50,12 +50,14 @@ That's the whole list.
 ```bash
 git clone <repo-url> brain
 cd brain
-python brain.py init
 ```
 
 Then open the folder in your assistant and say:
 
 > Read BOOTSTRAP.md and follow it.
+
+It runs `bootstrap` and `init` for you, in that order. Both are idempotent, so running
+them yourself first does no harm.
 
 It will ask which assistant it is, install the right adapter, and hand you your first
 lesson. Setup ends with you having learned something, not with a configuration screen.
@@ -167,9 +169,13 @@ function.
 The **forbidden** column is what makes these real. Examiner not seeing Teacher's
 reasoning is what makes the test fair.
 
-On an assistant with real subagents (Claude Code), each persona runs in its own context
-and the isolation is enforced. Everywhere else they run sequentially in one thread and
-the isolation is instructed. It degrades honestly — the contracts don't change.
+Today the personas run sequentially in one conversation on every assistant, and the
+isolation is instructed rather than enforced — including Examiner not reading Teacher's
+reasoning. That is a real limitation: an instruction to ignore what you just read is
+weaker than never having read it.
+
+On an assistant with genuine subagents, running each persona in its own context would
+enforce it. Nothing shipped here does that yet.
 
 ---
 
@@ -253,13 +259,21 @@ it, so there is nothing to keep in sync.
 ## Commands
 
 ```
-python brain.py init        Create data/, its git repo, and the starting files
-python brain.py bootstrap   Detect the assistant, install its adapter (additive)
-python brain.py due         Today's briefing: reviews due, top gap, oldest question
-python brain.py graph       Orphans, hubs, frontier, bridges
-python brain.py migrate     Rename folders safely — rewrites [[links]], keeps history
-python brain.py selftest    Verify date math, parsing, graph metrics, idempotence
+python brain.py init              Create data/, its git repo, and the starting files
+python brain.py bootstrap <name>  Install that assistant's adapter (additive, idempotent)
+python brain.py due               Today's briefing: reviews due, top gap, oldest question
+python brain.py graph             Orphans, broken links, hubs, frontier, bridges
+python brain.py decay             What should leave the system
+python brain.py migrate           Move folders to match config.json, verifying links
+python brain.py selftest          Verify date math, parsing, graph metrics, idempotence
 ```
+
+`<name>` is one of `claude`, `cursor`, `copilot`, `gemini`. The script does no detection
+— your assistant states which one it is and passes the name, per `BOOTSTRAP.md`.
+
+**`brain.py` never edits your notes.** It computes facts and reports them; the assistant
+does the writing. `decay` lists what should leave the system, it does not remove
+anything — the Archivist decides, and its contract forbids deleting without asking.
 
 `brain.py` is standard library only and cross-platform. Run `selftest` after any edit.
 
@@ -276,7 +290,7 @@ brain/
   brain.py             the engine. stdlib only.
   config.json          paths and policy. the only file bootstrap edits.
   personas/            scout, teacher, examiner, scribe, critic, archivist
-  templates/           note, skill, log, handover
+  templates/           note, skill, log, interview
   adapters/            per-assistant command templates
   docs/design.md       full architecture
 
@@ -295,8 +309,14 @@ brain/
 
 ## Customizing
 
-**Renaming folders:** change `config.json`, never paths in code. Run
-`python brain.py migrate` first — it rewrites `[[links]]` and preserves git history.
+**Renaming folders:** change `config.json`, never paths in code. Then run
+`python brain.py migrate`, which moves the folders with `git mv` so history survives.
+Your `[[links]]` need no rewriting — link targets are file stems, so a folder move
+leaves them all valid, and `migrate` verifies that rather than assuming it.
+
+Paths must stay relative, use forward slashes, and live inside your data root. Anything
+else is rejected with a warning and falls back to the default — that rule is what keeps
+your notes inside the repo that has no remote.
 
 **Editing `brain.py`:** it's yours. Run `python brain.py selftest` afterwards.
 

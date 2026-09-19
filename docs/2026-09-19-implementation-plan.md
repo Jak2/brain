@@ -1926,8 +1926,22 @@ Expected: `33 passed, 0 failed`, exit 0
 
 - [ ] **Step 2: Confirm no third-party imports slipped in**
 
-Run: `grep -nE '^\s*(import|from) ' brain.py selftest.py | grep -vE '(argparse|datetime|json|re|sys|shutil|subprocess|tempfile|traceback|pathlib|brain|selftest)'`
-Expected: no output. Any line here violates a global constraint.
+Run:
+
+```bash
+grep -hoE '^\s*(import|from) [A-Za-z_][A-Za-z0-9_]*' brain.py selftest.py \
+  | awk '{print $2}' | sort -u \
+  | grep -vxE '(argparse|contextlib|datetime|io|json|pathlib|re|shutil|subprocess|sys|tempfile|traceback|brain|selftest)'
+```
+
+Expected: no output. Any module printed here violates a global constraint.
+
+**Do not use the naive form** `grep ... | grep -vE '(...|brain|selftest)'`. The first
+grep prefixes every line with its filename, and `brain`/`selftest` are in the allow-list,
+so the filename alone satisfies the exclude pattern and **every line passes regardless of
+what is imported** — `import requests` in `brain.py` would slip straight through. The
+form above extracts the module name first and matches it whole (`grep -vx`), so a
+filename cannot launder it.
 
 - [ ] **Step 3: Confirm the data repo cannot be pushed**
 
