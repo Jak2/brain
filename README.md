@@ -52,17 +52,25 @@ git clone <repo-url> brain
 cd brain
 ```
 
-Then open the folder in your assistant and say:
+Then open that folder in your assistant — Cursor, Claude Code, Copilot, whatever you
+have — and say:
 
 > Read BOOTSTRAP.md and follow it.
 
-It runs `bootstrap` and `init` for you, in that order. Both are idempotent, so running
-them yourself first does no harm.
+That is the whole setup. It will name which assistant it is and ask you to confirm,
+install that assistant's adapter, create `data/`, and then start the cold-start
+interview.
 
-It will ask which assistant it is, install the right adapter, and hand you your first
-lesson. Setup ends with you having learned something, not with a configuration screen.
+**What the first session looks like.** Five questions about your work and where you
+want to be, then it writes `data/target.md` and 8–12 skill files, then it teaches you
+one thing and tests whether it stuck. Budget 20–30 minutes. You finish having learned
+something, not having configured a tool.
 
-From then on, two commands:
+Question 3 — *what do you nod along to in meetings without really following?* — is the
+one that decides whether any of this is worth running. Answer it honestly. An inflated
+skill map sends the system after the wrong things for months.
+
+**The next day**, and every day after, two commands:
 
 | Command | What happens |
 |---|---|
