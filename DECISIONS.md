@@ -514,10 +514,20 @@ interval table silently corrupts a review schedule, and nothing would catch it.
 **Date:** 2026-09-19 · **Status:** Accepted
 
 A final whole-branch review found four places `brain.py` parses and reports on, that no
-shipped instruction ever told an assistant to create: `state.json`'s `in_flight` (and
-`last_start`/`last_end`), `data/questions.md`, a skill file named by Critic but never
-written to disk, and `python brain.py graph`'s output, which nothing in the loop ever
-ran. Each is now given an explicit owner in `AGENTS.md` or a persona file.
+shipped instruction ever told an assistant to create: `state.json`'s `in_flight`,
+`data/questions.md`, a skill file named by Critic but never written to disk, and
+`python brain.py graph`'s output, which nothing in the loop ever ran. Each is now given
+an explicit owner in `AGENTS.md` or a persona file.
+
+**`last_start`/`last_end` are the mirror of this, not a fifth instance.** The same
+review also found these two neither read nor written. They are not among the four
+above: AGENTS.md's resume steps (2 and 5) now set them on every `/start` and `/end`, so
+they are written — but nothing in `brain.py` reads either back. `read_state`'s only
+caller, `cmd_due`, looks at `in_flight` alone. Written-and-unread is the inverse of
+read-but-never-written, not an instance of it, yet it comes from the same blindness:
+nobody traced a field's readers and writers in either direction before instructing one
+half of the pair. Harmless — nothing consumes the values — but worth naming rather than
+left to look like it was fixed alongside the four.
 
 **Why record the class, not just the four fixes.** Each instance passed review alone —
 the code that reads a field is correct, and the docs that describe the field are

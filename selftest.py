@@ -1,8 +1,8 @@
 """Self-checks for brain.py. Run: python brain.py selftest"""
+import ast
 import contextlib
 import datetime
 import io
-import re
 import shutil
 import tempfile
 import traceback
@@ -453,7 +453,7 @@ def test_read_state_warns_on_corrupt_json():
         assert _silent(brain.cmd_init, config, root) == 0
         (root / "data" / "state.json").write_text("not json{", encoding="utf-8")
         state, _out, err = _capture(brain.read_state, config, root)
-        assert state == {"schema": 1, "in_flight": None, "bootstrapped": []}, state
+        assert state == {"schema": 1, "in_flight": None}, state
         assert "state.json" in err, "must warn about the corrupt state file: " + err
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
@@ -647,6 +647,26 @@ def test_load_config_keeps_unknown_policy_key_untouched():
     assert config["policy"]["custom_key"] == "hello", config["policy"]
 
 
+def test_load_config_falls_back_for_empty_intervals_days():
+    # next_interval() does intervals[0] when there's no current match -
+    # an empty list turns that into an IndexError instead of a warning.
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        config = _load_config_from({"policy": {"intervals_days": []}})
+    assert config["policy"]["intervals_days"] == [1, 3, 7, 16, 35], config["policy"]
+    assert "intervals_days" in buf.getvalue(), "must warn: " + buf.getvalue()
+
+
+def test_load_config_falls_back_for_non_int_intervals_days_elements():
+    # The list-shape check passes (it is a list) but next_interval() compares
+    # its elements to an int, so a str element raises TypeError, not a warning.
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        config = _load_config_from({"policy": {"intervals_days": ["a", "b"]}})
+    assert config["policy"]["intervals_days"] == [1, 3, 7, 16, 35], config["policy"]
+    assert "intervals_days" in buf.getvalue(), "must warn: " + buf.getvalue()
+
+
 def test_migrate_moves_folder_and_keeps_links_resolving():
     root = _tmp_root()
     try:
@@ -821,6 +841,23 @@ def test_schedule_unknown_slug_returns_1_without_writing():
         shutil.rmtree(str(root), ignore_errors=True)
 
 
+def test_schedule_warns_and_returns_1_on_read_only_skill_file():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        path = _write_skill(root, "locked", 2, "2020-01-01", interval_days=1)
+        path.chmod(0o444)
+        try:
+            code, _out, err = _capture(brain.cmd_schedule, "locked", True, config, root)
+            assert code == 1, code
+            assert "locked.md" in err, "must name the path: " + err
+        finally:
+            path.chmod(0o644)
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
 def test_interview_template_has_five_questions():
     text = (brain.ROOT / "templates" / "interview.md").read_text(encoding="utf-8")
     for n in range(1, 6):
@@ -828,22 +865,33 @@ def test_interview_template_has_five_questions():
 
 
 STDLIB_ALLOWLIST = {
-    "argparse", "contextlib", "datetime", "io", "json", "pathlib", "re",
+    "argparse", "ast", "contextlib", "datetime", "io", "json", "pathlib", "re",
     "shutil", "subprocess", "sys", "tempfile", "traceback", "brain", "selftest",
 }
-IMPORT_RE = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_][A-Za-z0-9_.]*)", re.MULTILINE)
 
 
 def test_only_stdlib_and_local_modules_are_imported():
-    # ADR-025: match module names, never whole lines - a grep-based check once
-    # passed vacuously because the filename in its own output line satisfied
-    # the allow-list regardless of what was actually imported.
+    # ADR-025: walk the AST, never match text - a regex anchored at line start
+    # still missed a third-party name sharing a comma-separated import line
+    # ("import json, requests" only ever matched "json"), and could never see
+    # an import nested inside a function, such as brain.py's own
+    # `import selftest` inside main(). A parsed tree has no such blind spots:
+    # every Import/ImportFrom node is found regardless of where it sits.
     for name in ("brain.py", "selftest.py"):
         text = (brain.ROOT / name).read_text(encoding="utf-8")
-        for match in IMPORT_RE.finditer(text):
-            module = match.group(1).split(".")[0]
-            assert module in STDLIB_ALLOWLIST, \
-                "%s imports %r, not on the stdlib allow-list" % (name, module)
+        tree = ast.parse(text, filename=name)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.module is None:  # relative import, e.g. "from . import x"
+                    continue
+                modules = [node.module.split(".")[0]]
+            else:
+                continue
+            for module in modules:
+                assert module in STDLIB_ALLOWLIST, \
+                    "%s imports %r, not on the stdlib allow-list" % (name, module)
 
 
 def run():

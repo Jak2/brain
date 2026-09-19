@@ -191,7 +191,7 @@ there warns and falls back to the default (ADR-026).
 
 Standard library only. `pathlib` (`Path`, `PurePosixPath`, `PureWindowsPath`), `json`,
 `datetime`, `re`, `argparse`, `subprocess` (git). No third-party imports, ever.
-`selftest.py` additionally uses `shutil`, `tempfile`, `contextlib`, `io`, and
+`selftest.py` additionally uses `shutil`, `tempfile`, `contextlib`, `io`, `ast`, and
 `traceback` for fixtures — `brain.py` itself does not import any of them.
 
 | Subcommand | Does |

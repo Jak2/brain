@@ -114,6 +114,17 @@ def load_config():
                 warn("config.json: %s.%r is %s, expected %s - using default" % (
                     section, key, type(config[section][key]).__name__, type(default).__name__))
                 config[section][key] = json.loads(json.dumps(default))
+    # Same risk another level down, specific to intervals_days: the type
+    # check above confirms it's a list, but not what's in it, and
+    # next_interval() indexes into it (IndexError on empty) and compares
+    # its elements to an int (TypeError on non-int) - both would otherwise
+    # reach the caller as an unhandled exception instead of a warning.
+    intervals = config["policy"]["intervals_days"]
+    if not intervals or not all(type(v) is int for v in intervals):
+        warn("config.json: policy.'intervals_days' must be a non-empty list of int "
+             "(got %r) - using default" % (intervals,))
+        config["policy"]["intervals_days"] = json.loads(
+            json.dumps(DEFAULT_CONFIG["policy"]["intervals_days"]))
     # paths.data and paths.local are pinned to their defaults: the outer
     # .gitignore matches the literal string "data/", and data/.gitignore
     # hardcodes "local/" - renaming either one silently drops an ignore layer
@@ -425,7 +436,7 @@ def due_skills(skills, config, when):
 
 
 def read_state(config, root=ROOT):
-    default = {"schema": 1, "in_flight": None, "bootstrapped": []}
+    default = {"schema": 1, "in_flight": None}
     path = root / config["paths"]["data"] / "state.json"
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
@@ -577,7 +588,11 @@ def cmd_schedule(slug, passed, config, root=ROOT):
     meta["last_reviewed"] = now.isoformat()
     meta["next_review"] = (now + datetime.timedelta(days=interval)).isoformat()
 
-    path.write_text(render_frontmatter(meta, body), encoding="utf-8")
+    try:
+        path.write_text(render_frontmatter(meta, body), encoding="utf-8")
+    except OSError as exc:
+        warn("schedule: %s: %s - not writing" % (path.name, exc))
+        return 1
 
     print("scheduled: %s interval_days=%d last_reviewed=%s next_review=%s"
           % (slug, interval, meta["last_reviewed"], meta["next_review"]))
