@@ -425,6 +425,41 @@ def cmd_init(config, root=ROOT):
 ASSISTANTS = ["claude", "cursor", "copilot", "gemini"]
 
 
+def cmd_migrate(config, root=ROOT):
+    """Reconcile folders on disk with config.json paths. Prefers `git mv` for history."""
+    data = root / config["paths"]["data"]
+    moved = 0
+    # Defaults are the only record of where a folder used to live.
+    for key, default in DEFAULT_CONFIG["paths"].items():
+        if key == "data":
+            continue
+        target = root / config["paths"][key]
+        if target.exists():
+            continue
+        old = root / default
+        if not old.is_dir():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        code, out = git(["mv", str(old), str(target)], data)
+        if code != 0:
+            old.rename(target)  # git absent or path untracked - plain move still works
+        print("moved %s -> %s" % (default, config["paths"][key]))
+        moved += 1
+
+    if not moved:
+        print("nothing to migrate - folders already match config.json")
+        return 0
+
+    # Link targets are file stems, so a folder move leaves every [[link]] valid.
+    # Verify rather than assume.
+    adj, nodes = build_graph(config, root)
+    broken = sorted(n for n, kind in nodes.items() if kind == "broken")
+    if broken:
+        warn("broken links after migrate: " + ", ".join(broken))
+    print("migrated %d folder(s), %d broken link(s)" % (moved, len(broken)))
+    return 0
+
+
 def cmd_bootstrap(assistant, config, root=ROOT):
     """Copy one assistant's adapter into place. Additive and idempotent."""
     if assistant not in ASSISTANTS:
@@ -466,6 +501,7 @@ def build_parser():
     sub.add_parser("init", help="create data/ and its local-only git repo")
     sub.add_parser("due", help="today's briefing")
     sub.add_parser("graph", help="orphans, hubs, frontier, bridges")
+    sub.add_parser("migrate", help="reconcile folders with config.json paths")
     boot = sub.add_parser("bootstrap", help="install one assistant's adapter")
     boot.add_argument("assistant", choices=ASSISTANTS)
     return parser
@@ -482,6 +518,8 @@ def main(argv=None):
         return cmd_due(load_config())
     if args.command == "graph":
         return cmd_graph(load_config())
+    if args.command == "migrate":
+        return cmd_migrate(load_config())
     if args.command == "bootstrap":
         return cmd_bootstrap(args.assistant, load_config())
     return 0

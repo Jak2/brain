@@ -451,6 +451,30 @@ def test_load_config_keeps_unknown_policy_key_untouched():
     assert config["policy"]["custom_key"] == "hello", config["policy"]
 
 
+def test_migrate_moves_folder_and_keeps_links_resolving():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        (root / "data" / "notes" / "2026-01-01-a.md").write_text(
+            "---\nid: a\nskill: x\ncreated: 2026-01-01\n---\n\nsee [[2026-01-02-b]]\n",
+            encoding="utf-8")
+        (root / "data" / "notes" / "2026-01-02-b.md").write_text(
+            "---\nid: b\nskill: x\ncreated: 2026-01-02\n---\n\nsee [[2026-01-01-a]]\n",
+            encoding="utf-8")
+
+        config["paths"]["notes"] = "data/knowledge"
+        assert _silent(brain.cmd_migrate, config, root) == 0
+        assert (root / "data" / "knowledge" / "2026-01-01-a.md").is_file()
+        assert not (root / "data" / "notes").exists()
+
+        _, nodes = brain.build_graph(config, root)
+        assert nodes.get("2026-01-02-b") == "note", \
+            "links must still resolve after the move, not become broken"
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
 def run():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []
