@@ -161,6 +161,117 @@ STARTER = {
 }
 
 
+LINK_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
+
+
+def extract_links(body):
+    """Every [[wikilink]] target in order, blanks discarded."""
+    return [m.strip() for m in LINK_RE.findall(body) if m.strip()]
+
+
+def build_graph(config, root=ROOT):
+    """Return (adjacency, nodes). nodes maps id -> 'note' | 'skill' | 'broken'."""
+    adj, nodes = {}, {}
+    notes_dir = root / config["paths"]["notes"]
+
+    for skill in read_skills(config, root):
+        nodes[skill["slug"]] = "skill"
+        adj.setdefault(skill["slug"], set())
+
+    if notes_dir.is_dir():
+        for path in sorted(notes_dir.glob("*.md")):
+            text = read_text_safe(path)
+            if text is None:
+                continue
+            try:
+                _, body = parse_frontmatter(text)
+            except FrontmatterError as exc:
+                warn("%s: %s - skipped" % (path.name, exc))
+                continue
+            node = path.stem
+            nodes[node] = "note"
+            adj.setdefault(node, set())
+            for target in extract_links(body):
+                if target == node:
+                    continue  # ponytail: self-links are noise, not structure
+                adj.setdefault(target, set())
+                adj[node].add(target)
+                adj[target].add(node)
+                nodes.setdefault(target, "broken")
+    return adj, nodes
+
+
+def articulation_points(adj):
+    """Hopcroft-Tarjan cut vertices.
+
+    ponytail: recursive DFS. Fine to a few thousand notes; make it iterative if a
+    RecursionError ever appears.
+    """
+    disc, low, parent, out = {}, {}, {}, set()
+    counter = [0]
+
+    def dfs(u):
+        disc[u] = low[u] = counter[0]
+        counter[0] += 1
+        children = 0
+        for v in sorted(adj.get(u, ())):
+            if v not in disc:
+                parent[v] = u
+                children += 1
+                dfs(v)
+                low[u] = min(low[u], low[v])
+                if u in parent and low[v] >= disc[u]:
+                    out.add(u)
+            elif v != parent.get(u):
+                low[u] = min(low[u], disc[v])
+        if u not in parent and children > 1:
+            out.add(u)
+
+    for node in sorted(adj):
+        if node not in disc:
+            dfs(node)
+    return out
+
+
+def cmd_graph(config, root=ROOT):
+    adj, nodes = build_graph(config, root)
+    note_count = sum(1 for kind in nodes.values() if kind == "note")
+    minimum = config["policy"]["graph_min_notes"]
+
+    print("GRAPH %d notes, %d nodes, %d edges"
+          % (note_count, len(nodes), sum(len(v) for v in adj.values()) // 2))
+
+    broken = sorted(n for n, kind in nodes.items() if kind == "broken")
+    if broken:
+        print("broken links: " + ", ".join(broken))
+
+    orphans = sorted(n for n, kind in nodes.items()
+                     if kind == "note" and not adj.get(n))
+    if orphans:
+        print("orphans: " + ", ".join(orphans))
+
+    if note_count < minimum:
+        print("metrics: need %d notes for hubs/frontier/bridges (have %d)"
+              % (minimum, note_count))
+        return 0
+
+    ranked = sorted(adj, key=lambda n: (-len(adj[n]), n))
+    hubs = ranked[: max(1, len(ranked) // 10)]
+    print("hubs: " + ", ".join(hubs))
+
+    hub_set = set(hubs)
+    frontier = sorted(
+        (s["slug"] for s in read_skills(config, root)
+         if isinstance(s["level"], int) and s["level"] <= 1
+         and adj.get(s["slug"], set()) & hub_set),
+        key=lambda slug: -len(adj.get(slug, set())))
+    print("frontier: " + (", ".join(frontier) if frontier else "none"))
+
+    bridges = sorted(n for n in articulation_points(adj) if len(adj.get(n, ())) >= 2)
+    print("bridges: " + (", ".join(bridges) if bridges else "none"))
+    return 0
+
+
 def read_skills(config, root=ROOT):
     """Every parseable skill file. Malformed files warn and are skipped."""
     folder = root / config["paths"]["skills"]
@@ -342,6 +453,7 @@ def build_parser():
     sub.add_parser("selftest", help="verify the engine")
     sub.add_parser("init", help="create data/ and its local-only git repo")
     sub.add_parser("due", help="today's briefing")
+    sub.add_parser("graph", help="orphans, hubs, frontier, bridges")
     boot = sub.add_parser("bootstrap", help="install one assistant's adapter")
     boot.add_argument("assistant", choices=ASSISTANTS)
     return parser
@@ -356,6 +468,8 @@ def main(argv=None):
         return cmd_init(load_config())
     if args.command == "due":
         return cmd_due(load_config())
+    if args.command == "graph":
+        return cmd_graph(load_config())
     if args.command == "bootstrap":
         return cmd_bootstrap(args.assistant, load_config())
     return 0

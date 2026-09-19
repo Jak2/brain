@@ -369,6 +369,44 @@ def test_claude_adapter_imports_agents_md():
         "CLAUDE.md must import AGENTS.md on line 1, not duplicate it"
 
 
+def test_extract_links_finds_wikilinks_only():
+    body = "sees [[alpha]] and [[beta-two]] but not [plain](x) or [[]]"
+    assert brain.extract_links(body) == ["alpha", "beta-two"], brain.extract_links(body)
+
+
+def test_articulation_point_on_a_known_graph():
+    # alpha - center - beta : center is the only cut vertex
+    adj = {"alpha": {"center"}, "center": {"alpha", "beta"}, "beta": {"center"}}
+    assert brain.articulation_points(adj) == {"center"}, brain.articulation_points(adj)
+
+
+def test_articulation_points_empty_on_a_triangle():
+    adj = {"a": {"b", "c"}, "b": {"a", "c"}, "c": {"a", "b"}}
+    assert brain.articulation_points(adj) == set()
+
+
+def test_graph_finds_orphans_and_broken_links():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        notes = root / "data" / "notes"
+        (notes / "2026-01-01-alone.md").write_text(
+            "---\nid: alone\nskill: x\ncreated: 2026-01-01\n---\n\nno links here\n",
+            encoding="utf-8")
+        (notes / "2026-01-02-points-nowhere.md").write_text(
+            "---\nid: points-nowhere\nskill: x\ncreated: 2026-01-02\n---\n\n"
+            "see [[ghost]]\n", encoding="utf-8")
+        adj, nodes = brain.build_graph(config, root)
+        orphans = [n for n in nodes if not adj.get(n)]
+        assert "2026-01-01-alone" in orphans, orphans
+        assert "ghost" in adj.get("2026-01-02-points-nowhere", set()), adj
+        assert nodes.get("ghost") == "broken", nodes
+        assert _silent(brain.cmd_graph, config, root) == 0
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
 def run():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []
