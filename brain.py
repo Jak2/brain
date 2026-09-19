@@ -114,22 +114,31 @@ def load_config():
                 warn("config.json: %s.%r is %s, expected %s - using default" % (
                     section, key, type(config[section][key]).__name__, type(default).__name__))
                 config[section][key] = json.loads(json.dumps(default))
-    # A paths value is hand-edited too, and pathlib silently drops the repo root
-    # when joined with an absolute value - reject that and '..' escapes here so
-    # every command inherits a safe path, not just migrate.
-    # data is validated first - every other key's containment check is against
-    # it, so a bad data value must already be replaced by its default below.
+    # paths.data and paths.local are pinned to their defaults: the outer
+    # .gitignore matches the literal string "data/", and data/.gitignore
+    # hardcodes "local/" - renaming either one silently drops an ignore layer
+    # and can push private notes into the pushable public repo. Renaming
+    # notes/skills/log stays supported and goes through the containment
+    # checks below, same as before.
+    data_default = DEFAULT_CONFIG["paths"]["data"]
     data_value = config["paths"]["data"]
-    if _unsafe_relpath(data_value):
-        warn("config.json: paths.%r is not a safe relative path (%r) - using default"
-             % ("data", data_value))
-        data_value = DEFAULT_CONFIG["paths"]["data"]
+    if data_value != data_default:
+        warn("config.json: paths.'data' is pinned to %r (got %r) - renaming it "
+             "would move notes outside the outer .gitignore - using default"
+             % (data_default, data_value))
+        data_value = data_default
     config["paths"]["data"] = data_value
 
     for key, default in DEFAULT_CONFIG["paths"].items():
         if key == "data":
             continue
         value = config["paths"][key]
+        if key == "local" and value != default:
+            warn("config.json: paths.'local' is pinned to %r (got %r) - renaming it "
+                 "would drop data/.gitignore's inner ignore layer - using default"
+                 % (default, value))
+            config["paths"][key] = default
+            continue
         if _unsafe_relpath(value):
             warn("config.json: paths.%r is not a safe relative path (%r) - using default"
                  % (key, value))
@@ -172,6 +181,19 @@ def parse_frontmatter(text):
         key, _, value = line.partition(":")
         meta[key.strip()] = _coerce(value.strip())
     return meta, parts[2].lstrip("\n")
+
+
+def render_frontmatter(meta, body):
+    """Inverse of parse_frontmatter. Scalars stringify as-is; lists render as
+    [a, b] to round-trip through _coerce unchanged."""
+    lines = []
+    for key, value in meta.items():
+        if isinstance(value, list):
+            rendered = "[%s]" % ", ".join(str(v) for v in value)
+        else:
+            rendered = str(value)
+        lines.append("%s: %s" % (key, rendered))
+    return "---\n%s\n---\n\n%s" % ("\n".join(lines), body)
 
 
 def read_text_safe(path):
@@ -243,7 +265,7 @@ STARTER = {
 }
 
 
-LINK_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
+LINK_RE = re.compile(r"\[\[([^\[\]\n]+)\]\]")
 
 
 def extract_links(body):
@@ -290,8 +312,8 @@ def build_graph(config, root=ROOT):
 def articulation_points(adj):
     """Hopcroft-Tarjan cut vertices.
 
-    ponytail: recursive DFS. Fine to a few thousand notes; make it iterative if a
-    RecursionError ever appears.
+    ponytail: recursive DFS. Verified fine at 900 chained notes, RecursionError
+    at 1200; make it iterative if a RecursionError ever appears.
     """
     disc, low, parent, out = {}, {}, {}, set()
     counter = [0]
@@ -374,7 +396,13 @@ def read_skills(config, root=ROOT):
             warn("%s: %s - skipped" % (path.name, exc))
             continue
         meta["path"] = path
-        meta.setdefault("slug", path.stem)
+        slug = meta.get("slug")
+        if slug is not None and not isinstance(slug, str):
+            warn("%s: slug is %s, not a string - using the filename instead"
+                 % (path.name, type(slug).__name__))
+            meta["slug"] = path.stem
+        else:
+            meta.setdefault("slug", path.stem)
         meta.setdefault("level", 0)
         meta.setdefault("target_level", 3)
         skills.append(meta)
@@ -401,7 +429,10 @@ def read_state(config, root=ROOT):
     path = root / config["paths"]["data"] / "state.json"
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
+        return default
+    except (OSError, ValueError) as exc:
+        warn("%s: %s - resume point lost, using default" % (path.name, exc))
         return default
     return state if isinstance(state, dict) else default
 
@@ -517,6 +548,45 @@ def cmd_decay(config, root=ROOT):
     return 0
 
 
+def cmd_schedule(slug, passed, config, root=ROOT):
+    """Record a review outcome. The only command that writes to a skill file -
+    every other command stays read-only. Date arithmetic lives here, never in
+    the assistant."""
+    match = next((s for s in read_skills(config, root) if s["slug"] == slug), None)
+    if match is None:
+        warn("schedule: unknown skill %r" % slug)
+        return 1
+
+    path = match["path"]
+    text = read_text_safe(path)
+    if text is None:
+        return 1
+    try:
+        meta, body = parse_frontmatter(text)
+    except FrontmatterError as exc:
+        warn("schedule: %s: %s - not writing" % (path.name, exc))
+        return 1
+
+    intervals = config["policy"]["intervals_days"]
+    current = meta.get("interval_days")
+    if not isinstance(current, int):
+        current = intervals[0]
+    interval = next_interval(current, intervals, passed)
+    now = today()
+    meta["interval_days"] = interval
+    meta["last_reviewed"] = now.isoformat()
+    meta["next_review"] = (now + datetime.timedelta(days=interval)).isoformat()
+
+    path.write_text(render_frontmatter(meta, body), encoding="utf-8")
+
+    print("scheduled: %s interval_days=%d last_reviewed=%s next_review=%s"
+          % (slug, interval, meta["last_reviewed"], meta["next_review"]))
+    level = meta.get("level")
+    if passed and isinstance(level, int) and level >= config["policy"]["mastery_level"]:
+        print("mastered: %s leaves the review rotation" % slug)
+    return 0
+
+
 def cmd_init(config, root=ROOT):
     """Create data/ and its own git repo. Idempotent. Never overwrites content."""
     data = root / config["paths"]["data"]
@@ -536,7 +606,7 @@ def cmd_init(config, root=ROOT):
     if not state.exists():
         state.write_text(json.dumps({
             "schema": 1, "last_start": None, "last_end": None,
-            "in_flight": None, "bootstrapped": [],
+            "in_flight": None,
         }, indent=2) + "\n", encoding="utf-8")
 
     if not (data / ".git").exists():
@@ -649,6 +719,9 @@ def build_parser():
     sub.add_parser("graph", help="orphans, hubs, frontier, bridges")
     sub.add_parser("migrate", help="reconcile folders with config.json paths")
     sub.add_parser("decay", help="what should leave the system")
+    sched = sub.add_parser("schedule", help="record a review outcome for one skill")
+    sched.add_argument("slug")
+    sched.add_argument("outcome", choices=["pass", "fail"])
     boot = sub.add_parser("bootstrap", help="install one assistant's adapter")
     boot.add_argument("assistant", choices=ASSISTANTS)
     return parser
@@ -669,6 +742,8 @@ def main(argv=None):
         return cmd_migrate(load_config())
     if args.command == "decay":
         return cmd_decay(load_config())
+    if args.command == "schedule":
+        return cmd_schedule(args.slug, args.outcome == "pass", load_config())
     if args.command == "bootstrap":
         return cmd_bootstrap(args.assistant, load_config())
     return 0

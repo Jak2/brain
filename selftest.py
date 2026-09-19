@@ -2,6 +2,7 @@
 import contextlib
 import datetime
 import io
+import re
 import shutil
 import tempfile
 import traceback
@@ -91,12 +92,12 @@ def _load_config_from(loaded):
 
 
 def test_load_config_falls_back_for_non_list_assistants():
-    config = _load_config_from({"assistants": "oops"})
+    config = _silent(_load_config_from, {"assistants": "oops"})
     assert config["assistants"] == [], config["assistants"]
 
 
 def test_load_config_falls_back_for_non_dict_policy():
-    config = _load_config_from({"policy": "oops"})
+    config = _silent(_load_config_from, {"policy": "oops"})
     assert config["policy"]["mastery_level"] == 5, config["policy"]
     assert config["policy"]["daily_items"] == 3, config["policy"]
 
@@ -108,12 +109,12 @@ def test_load_config_partial_config_merges_over_defaults():
 
 
 def test_load_config_rejects_absolute_path():
-    config = _load_config_from({"paths": {"notes": "/etc/passwd"}})
+    config = _silent(_load_config_from, {"paths": {"notes": "/etc/passwd"}})
     assert config["paths"]["notes"] == "data/notes", config["paths"]
 
 
 def test_load_config_rejects_path_traversal():
-    config = _load_config_from({"paths": {"notes": "../../escape"}})
+    config = _silent(_load_config_from, {"paths": {"notes": "../../escape"}})
     assert config["paths"]["notes"] == "data/notes", config["paths"]
 
 
@@ -131,30 +132,35 @@ def test_load_config_rejects_path_outside_data_root():
 
 
 def test_load_config_rejects_path_equal_to_data_root():
-    config = _load_config_from({"paths": {"notes": "data"}})
+    config = _silent(_load_config_from, {"paths": {"notes": "data"}})
     assert config["paths"]["notes"] == "data/notes", config["paths"]
 
 
-def test_load_config_keeps_paths_under_a_renamed_data_root():
-    config = _load_config_from(
-        {"paths": {"data": "brain-data", "notes": "brain-data/notes"}})
-    assert config["paths"]["data"] == "brain-data", config["paths"]
-    assert config["paths"]["notes"] == "brain-data/notes", config["paths"]
-
-
-def test_load_config_rejects_path_outside_a_renamed_data_root():
-    # notes' value happens to equal its own default ("data/notes"), so a plain
-    # value check can't tell "left untouched" from "rejected and fell back to
-    # the same string" - assert the containment check actually fired instead.
+def test_load_config_pins_paths_data_to_its_default():
+    # paths.data is pinned: the outer .gitignore matches the literal string
+    # "data/", so a renamed data root would move the whole brain - notes and
+    # local/ alike - into the pushable public repo. Renaming is refused
+    # outright, not merely contained.
     buf = io.StringIO()
     with contextlib.redirect_stderr(buf):
         config = _load_config_from(
-            {"paths": {"data": "brain-data", "notes": "data/notes"}})
-    assert config["paths"]["data"] == "brain-data", config["paths"]
+            {"paths": {"data": "brain-data", "notes": "brain-data/notes"}})
+    assert config["paths"]["data"] == "data", config["paths"]
     assert config["paths"]["notes"] == "data/notes", \
-        "notes must fall back to its default - it no longer sits under the renamed data root"
-    assert "not inside paths.data" in buf.getvalue(), \
-        "containment check must fire even though the fallback string is unchanged: " + buf.getvalue()
+        "notes must fall back too - it no longer sits under the (rejected) renamed root"
+    assert "paths.'data' is pinned" in buf.getvalue(), \
+        "must warn that paths.data is pinned: " + buf.getvalue()
+
+
+def test_load_config_pins_paths_local_to_its_default():
+    # paths.local is pinned: data/.gitignore hardcodes "local/", so renaming
+    # paths.local would silently drop that inner ignore layer.
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        config = _load_config_from({"paths": {"local": "data/private"}})
+    assert config["paths"]["local"] == "data/local", config["paths"]
+    assert "paths.'local' is pinned" in buf.getvalue(), \
+        "must warn that paths.local is pinned: " + buf.getvalue()
 
 
 def test_load_config_rejects_backslash_path_outside_data_root():
@@ -189,13 +195,6 @@ def test_load_config_accepts_deep_forward_slash_path_under_data_root():
     assert config["paths"]["notes"] == "data/notes/deep", config["paths"]
 
 
-def test_load_config_accepts_renamed_root_with_forward_slash_notes():
-    config = _load_config_from(
-        {"paths": {"data": "brain-data", "notes": "brain-data/notes"}})
-    assert config["paths"]["data"] == "brain-data", config["paths"]
-    assert config["paths"]["notes"] == "brain-data/notes", config["paths"]
-
-
 PERSONAS = ["scout", "teacher", "examiner", "scribe", "critic", "archivist"]
 PERSONA_SECTIONS = ["## Gets", "## Produces", "## Forbidden", "## Done when"]
 
@@ -227,10 +226,20 @@ def test_note_template_contains_a_wikilink():
     assert "[[" in text, "note template must demonstrate a [[link]]"
 
 
+def _capture(fn, *args, **kwargs):
+    """Call fn with stdout and stderr captured. Returns (result, stdout_text,
+    stderr_text) - for tests that must inspect what a warning or a briefing
+    actually printed."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        result = fn(*args, **kwargs)
+    return result, out.getvalue(), err.getvalue()
+
+
 def _silent(fn, *args, **kwargs):
-    """Call a cmd_* function with stdout captured, so selftest output stays pristine."""
-    with contextlib.redirect_stdout(io.StringIO()):
-        return fn(*args, **kwargs)
+    """Call a function with stdout and stderr captured, so selftest output
+    stays pristine. Returns just the function's return value."""
+    return _capture(fn, *args, **kwargs)[0]
 
 
 def _tmp_root():
@@ -240,12 +249,13 @@ def _tmp_root():
     return root
 
 
-def _write_skill(root, slug, level, next_review, target_level=3):
+def _write_skill(root, slug, level, next_review, target_level=3, interval_days=1):
     path = root / "data" / "skills" / (slug + ".md")
     path.write_text(
         "---\nslug: %s\nlevel: %d\ntarget_level: %d\n"
-        "last_reviewed: 2026-01-01\nnext_review: %s\ninterval_days: 1\nevidence: []\n"
-        "---\n\n## Level rationale\nseeded\n" % (slug, level, target_level, next_review),
+        "last_reviewed: 2026-01-01\nnext_review: %s\ninterval_days: %d\nevidence: []\n"
+        "---\n\n## Level rationale\nseeded\n"
+        % (slug, level, target_level, next_review, interval_days),
         encoding="utf-8",
     )
     return path
@@ -295,7 +305,6 @@ def test_init_writes_valid_state_json():
         state = _json.loads((root / "data" / "state.json").read_text(encoding="utf-8"))
         assert state["in_flight"] is None, state
         assert state["schema"] == 1, state
-        assert state["bootstrapped"] == [], state
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
 
@@ -308,8 +317,36 @@ def test_read_skills_skips_malformed_without_crashing():
         _write_skill(root, "good", 2, "2020-01-01")
         (root / "data" / "skills" / "broken.md").write_text(
             "no frontmatter at all\n", encoding="utf-8")
-        skills = brain.read_skills(config, root)
+        skills = _silent(brain.read_skills, config, root)
         assert [s["slug"] for s in skills] == ["good"], skills
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_read_skills_falls_back_to_filename_when_slug_is_a_list():
+    # C1 repro: templates/skill.md's own [a, b] syntax for evidence: also
+    # applies to slug:, which then becomes an unhashable dict key downstream.
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        (root / "data" / "skills" / "weird.md").write_text(
+            "---\nslug: [python-async]\nlevel: 2\n---\n\nbody\n", encoding="utf-8")
+        skills, _out, err = _capture(brain.read_skills, config, root)
+        assert [s["slug"] for s in skills] == ["weird"], skills
+        assert "weird.md" in err, "must warn naming the file: " + err
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_due_does_not_crash_on_non_str_slug():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        (root / "data" / "skills" / "weird.md").write_text(
+            "---\nslug: [python-async]\nlevel: 2\n---\n\nbody\n", encoding="utf-8")
+        assert _silent(brain.cmd_due, config, root) == 0
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
 
@@ -409,6 +446,34 @@ def test_due_treats_non_dict_in_flight_as_none():
         shutil.rmtree(str(root), ignore_errors=True)
 
 
+def test_read_state_warns_on_corrupt_json():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        (root / "data" / "state.json").write_text("not json{", encoding="utf-8")
+        state, _out, err = _capture(brain.read_state, config, root)
+        assert state == {"schema": 1, "in_flight": None, "bootstrapped": []}, state
+        assert "state.json" in err, "must warn about the corrupt state file: " + err
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_due_output_has_briefing_due_and_gap_lines():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        _write_skill(root, "overdue-one", 2, "2020-01-01", target_level=4)
+        result, out, _err = _capture(brain.cmd_due, config, root)
+        assert result == 0
+        assert out.startswith("BRIEFING " + brain.today().isoformat()), out
+        assert "due: overdue-one(L2, " in out, out
+        assert "gap: overdue-one (L2, target L4)" in out, out
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
 def test_bootstrap_is_idempotent_and_additive():
     root = _tmp_root()
     try:
@@ -463,6 +528,11 @@ def test_extract_links_finds_wikilinks_only():
     assert brain.extract_links(body) == ["alpha", "beta-two"], brain.extract_links(body)
 
 
+def test_extract_links_does_not_span_a_newline():
+    body = "broken [[a\nb]] but real [[real]]"
+    assert brain.extract_links(body) == ["real"], brain.extract_links(body)
+
+
 def test_articulation_point_on_a_known_graph():
     # alpha - center - beta : center is the only cut vertex
     adj = {"alpha": {"center"}, "center": {"alpha", "beta"}, "beta": {"center"}}
@@ -505,7 +575,7 @@ def test_graph_skill_classification_beats_same_named_note():
         (root / "data" / "notes" / "x.md").write_text(
             "---\nid: x\nskill: x\ncreated: 2026-01-01\n---\n\nno links here\n",
             encoding="utf-8")
-        adj, nodes = brain.build_graph(config, root)
+        adj, nodes = _silent(brain.build_graph, config, root)
         assert nodes["x"] == "skill", nodes
         orphans = [n for n, kind in nodes.items() if kind == "note" and not adj.get(n)]
         assert "x" not in orphans, orphans
@@ -513,8 +583,45 @@ def test_graph_skill_classification_beats_same_named_note():
         shutil.rmtree(str(root), ignore_errors=True)
 
 
+def test_graph_reports_hubs_frontier_and_bridges_above_threshold():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        notes = root / "data" / "notes"
+        minimum = config["policy"]["graph_min_notes"]
+
+        (notes / "hub.md").write_text(
+            "---\nid: hub\nskill: x\ncreated: 2026-01-01\n---\n\nthe hub\n",
+            encoding="utf-8")
+        for i in range(minimum):
+            (notes / ("leaf-%02d.md" % i)).write_text(
+                "---\nid: leaf-%02d\nskill: x\ncreated: 2026-01-01\n---\n\n"
+                "see [[hub]]\n" % i, encoding="utf-8")
+        _write_skill(root, "frontier-skill", 1, "2099-01-01")
+        (notes / "frontier-note.md").write_text(
+            "---\nid: frontier-note\nskill: x\ncreated: 2026-01-01\n---\n\n"
+            "see [[hub]] and [[frontier-skill]]\n", encoding="utf-8")
+
+        result, out, _err = _capture(brain.cmd_graph, config, root)
+        assert result == 0
+        lines = out.splitlines()
+        assert not any(l.startswith("metrics: need") for l in lines), out
+
+        hubs_line = next(l for l in lines if l.startswith("hubs:"))
+        assert "hub" in hubs_line, hubs_line
+
+        frontier_line = next(l for l in lines if l.startswith("frontier:"))
+        assert "frontier-skill" in frontier_line, frontier_line
+
+        bridges_line = next(l for l in lines if l.startswith("bridges:"))
+        assert "hub" in bridges_line, bridges_line
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
 def test_load_config_falls_back_for_non_int_graph_min_notes():
-    config = _load_config_from({"policy": {"graph_min_notes": "30"}})
+    config = _silent(_load_config_from, {"policy": {"graph_min_notes": "30"}})
     assert config["policy"]["graph_min_notes"] == 30, config["policy"]
     root = _tmp_root()
     try:
@@ -525,7 +632,7 @@ def test_load_config_falls_back_for_non_int_graph_min_notes():
 
 
 def test_due_survives_non_int_daily_items():
-    config = _load_config_from({"policy": {"daily_items": "3"}})
+    config = _silent(_load_config_from, {"policy": {"daily_items": "3"}})
     root = _tmp_root()
     try:
         assert _silent(brain.cmd_init, config, root) == 0
@@ -651,10 +758,92 @@ def test_decay_flags_mastered_skills_leaving_rotation():
         shutil.rmtree(str(root), ignore_errors=True)
 
 
+def test_schedule_pass_advances_interval_and_sets_dates():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        _write_skill(root, "adv", 2, "2020-01-01", interval_days=1)
+        assert _silent(brain.cmd_schedule, "adv", True, config, root) == 0
+        meta, _ = brain.parse_frontmatter(
+            (root / "data" / "skills" / "adv.md").read_text(encoding="utf-8"))
+        assert meta["interval_days"] == 3, meta
+        assert meta["last_reviewed"] == brain.today().isoformat(), meta
+        expected_next = (brain.today() + datetime.timedelta(days=3)).isoformat()
+        assert meta["next_review"] == expected_next, meta
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_schedule_fail_steps_interval_back():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        _write_skill(root, "back", 2, "2020-01-01", interval_days=7)
+        assert _silent(brain.cmd_schedule, "back", False, config, root) == 0
+        meta, _ = brain.parse_frontmatter(
+            (root / "data" / "skills" / "back.md").read_text(encoding="utf-8"))
+        assert meta["interval_days"] == 3, meta
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_schedule_preserves_body_and_unrelated_frontmatter_keys():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        path = root / "data" / "skills" / "kept.md"
+        path.write_text(
+            "---\nslug: kept\nlevel: 2\ntarget_level: 3\n"
+            "last_reviewed: 2020-01-01\nnext_review: 2020-01-01\ninterval_days: 1\n"
+            "evidence: [a, b]\n---\n\n## Level rationale\nhand-written notes\n",
+            encoding="utf-8")
+        assert _silent(brain.cmd_schedule, "kept", True, config, root) == 0
+        meta, body = brain.parse_frontmatter(path.read_text(encoding="utf-8"))
+        assert meta["evidence"] == ["a", "b"], meta
+        assert meta["level"] == 2, meta
+        assert meta["target_level"] == 3, meta
+        assert body == "## Level rationale\nhand-written notes\n", repr(body)
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_schedule_unknown_slug_returns_1_without_writing():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        assert _silent(brain.cmd_schedule, "ghost", True, config, root) == 1
+        assert not (root / "data" / "skills" / "ghost.md").exists()
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
 def test_interview_template_has_five_questions():
     text = (brain.ROOT / "templates" / "interview.md").read_text(encoding="utf-8")
     for n in range(1, 6):
         assert ("%d." % n) in text, "interview is missing question %d" % n
+
+
+STDLIB_ALLOWLIST = {
+    "argparse", "contextlib", "datetime", "io", "json", "pathlib", "re",
+    "shutil", "subprocess", "sys", "tempfile", "traceback", "brain", "selftest",
+}
+IMPORT_RE = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_][A-Za-z0-9_.]*)", re.MULTILINE)
+
+
+def test_only_stdlib_and_local_modules_are_imported():
+    # ADR-025: match module names, never whole lines - a grep-based check once
+    # passed vacuously because the filename in its own output line satisfied
+    # the allow-list regardless of what was actually imported.
+    for name in ("brain.py", "selftest.py"):
+        text = (brain.ROOT / name).read_text(encoding="utf-8")
+        for match in IMPORT_RE.finditer(text):
+            module = match.group(1).split(".")[0]
+            assert module in STDLIB_ALLOWLIST, \
+                "%s imports %r, not on the stdlib allow-list" % (name, module)
 
 
 def run():
