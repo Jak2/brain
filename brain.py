@@ -61,6 +61,14 @@ def load_config():
             warn("config.json: %r is %s, expected %s - using default" % (
                 key, type(config[key]).__name__, type(default).__name__))
             config[key] = json.loads(json.dumps(default))
+    # Same risk one level down: paths/policy values feed arithmetic and
+    # comparisons directly, so a wrong-shaped value there must not reach any caller.
+    for section in ("paths", "policy"):
+        for key, default in DEFAULT_CONFIG[section].items():
+            if type(config[section][key]) is not type(default):
+                warn("config.json: %s.%r is %s, expected %s - using default" % (
+                    section, key, type(config[section][key]).__name__, type(default).__name__))
+                config[section][key] = json.loads(json.dumps(default))
     return config
 
 
@@ -189,7 +197,11 @@ def build_graph(config, root=ROOT):
                 warn("%s: %s - skipped" % (path.name, exc))
                 continue
             node = path.stem
-            nodes[node] = "note"
+            if nodes.get(node) == "skill":
+                warn("%s: id %r collides with a skill of the same name - "
+                     "keeping skill classification" % (path.name, node))
+            else:
+                nodes[node] = "note"
             adj.setdefault(node, set())
             for target in extract_links(body):
                 if target == node:

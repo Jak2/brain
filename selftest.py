@@ -407,6 +407,50 @@ def test_graph_finds_orphans_and_broken_links():
         shutil.rmtree(str(root), ignore_errors=True)
 
 
+def test_graph_skill_classification_beats_same_named_note():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        assert _silent(brain.cmd_init, config, root) == 0
+        _write_skill(root, "x", 2, "2099-01-01")
+        (root / "data" / "notes" / "x.md").write_text(
+            "---\nid: x\nskill: x\ncreated: 2026-01-01\n---\n\nno links here\n",
+            encoding="utf-8")
+        adj, nodes = brain.build_graph(config, root)
+        assert nodes["x"] == "skill", nodes
+        orphans = [n for n, kind in nodes.items() if kind == "note" and not adj.get(n)]
+        assert "x" not in orphans, orphans
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_load_config_falls_back_for_non_int_graph_min_notes():
+    config = _load_config_from({"policy": {"graph_min_notes": "30"}})
+    assert config["policy"]["graph_min_notes"] == 30, config["policy"]
+    root = _tmp_root()
+    try:
+        assert _silent(brain.cmd_init, config, root) == 0
+        assert _silent(brain.cmd_graph, config, root) == 0
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_due_survives_non_int_daily_items():
+    config = _load_config_from({"policy": {"daily_items": "3"}})
+    root = _tmp_root()
+    try:
+        assert _silent(brain.cmd_init, config, root) == 0
+        _write_skill(root, "good", 2, "2020-01-01")
+        assert _silent(brain.cmd_due, config, root) == 0
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_load_config_keeps_unknown_policy_key_untouched():
+    config = _load_config_from({"policy": {"custom_key": "hello"}})
+    assert config["policy"]["custom_key"] == "hello", config["policy"]
+
+
 def run():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []
