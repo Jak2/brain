@@ -70,7 +70,7 @@ brain/                          public system repo
     cursor/commands/{start,end}.md
     copilot/{copilot-instructions.md,prompts/{start,end}.prompt.md}
     gemini/{GEMINI.md,commands/{start,end}.toml}
-  docs/design.md
+  docs/design.md  docs/prior-art.md  docs/how-this-was-built.md
   .gitignore                    -> data/
 
   data/                         created by `brain.py init`; own .git, no remote

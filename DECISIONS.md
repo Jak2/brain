@@ -720,7 +720,8 @@ anywhere, so the data is only available at the moment it happens. Recording is c
 now and impossible later.
 
 Found by reading `itechmeat/open-second-brain`, which tracks `_applied_count` alongside
-`_violated_count` and derives a Wilson lower bound on the ratio.
+`_violated_count` and derives a Wilson lower bound on the ratio. That survey, and
+everything else it turned up that was taken or rejected, is in `docs/prior-art.md`.
 
 **Scope, deliberately.** Promotion still counts raw misses against
 `promotion_threshold`. Nothing computes on the rate yet, because there is no data to

@@ -450,6 +450,7 @@ brain/
   templates/           note, skill, log, interview
   adapters/            per-assistant command templates
   docs/design.md       full architecture
+  docs/prior-art.md    what else exists, what was taken from it, what wasn't
 
   data/                yours. gitignored. own git repo, no remote.
     target.md          target role and ranked gaps
@@ -517,6 +518,9 @@ log.
 sessions have run so far. Every item is a guess about which part will break first, and
 guesses made before the first week are usually wrong about the ordering.
 
+Most of them came from reading other people's systems. Where each one came from, what
+was rejected and why: [docs/prior-art.md](docs/prior-art.md).
+
 | Deferred | Build it when | Why not now |
 |---|---|---|
 | **Rate-based promotion** — promote on missed/fired, not a raw count of 5 | `brain.py misses` visibly misranks: a check at 5/5 sorts below one at 6/180 | A conservative bound (Wilson, used by [open-second-brain](https://github.com/itechmeat/open-second-brain)) is ~20 lines of statistics on data you don't have yet. The `ok` lines are being recorded from day one precisely so this stays possible later. |
@@ -571,3 +575,7 @@ shape: `- YYYY-MM-DD check-slug | text`, or `| ok` for a check that passed.
 Every decision, its rationale, and the alternatives that were rejected:
 [DECISIONS.md](DECISIONS.md). Read it before proposing a change — the rejected options
 are the useful part.
+
+For decisions about other people's systems rather than this one — what else exists, what
+was borrowed from it, and what was deliberately left:
+[docs/prior-art.md](docs/prior-art.md).
