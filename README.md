@@ -200,10 +200,17 @@ request ──> is it a lookup? ──yes──> just answer. no gate.
                  v
             keep only questions whose answer changes the build   (ask at most 3)
                  v
-            log what wasn't specified ──> data/misses.md
+            log EVERY check that ran ──> data/misses.md
+              a miss:  - 2026-09-20 tests | no failing case named
+              a pass:  - 2026-09-20 cost | ok
                  v
             build it
 ```
+
+**Both outcomes get logged.** The `ok` lines are the denominator. Five misses out of
+five gates and five out of two hundred are different findings, and a log that records
+only misses can't tell them apart — and can't be backfilled, because a gate that passed
+leaves no other trace. `python brain.py misses` prints `missed / times the check ran`.
 
 **The trigger rule is load-bearing.** A gate that fires on "what does this function do"
 gets switched off in three days, and then it catches nothing. Lookups pass straight
@@ -226,9 +233,10 @@ see what you didn't think to mention.
 
 ```
   gate catches it ──> data/misses.md ──> brain.py misses
-                                              │
-                    ┌─────────────────────────┴───────────────┐
-                    │ seen >= 5, still fresh                  │ older than 90 days
+  gate passes ────────────^  (| ok)          │
+                                             │
+                    ┌────────────────────────┴────────────────┐
+                    │ missed >= 5, still fresh                │ older than 90 days
                     v                                         v
        data/checks/<slug>.md          AND          brain.py decay drops it
        a standing check, forever                   (it no longer describes you)
@@ -239,6 +247,9 @@ see what you didn't think to mention.
 Only unexpired misses count toward promotion. The question is whether you *still* do
 this, not whether you once did — otherwise a habit you fixed two years ago promotes
 itself into a permanent check.
+
+Promotion counts raw misses, not the rate. The `ok` lines don't feed it yet — see
+[Waiting on real use](#waiting-on-real-use).
 
 Promoted checks land in `data/checks/`, never in the system repo. They're yours, and
 they belong in the repo that has no remote.
@@ -387,7 +398,7 @@ python brain.py bootstrap <name>  Install that assistant's adapter (additive, id
 python brain.py due               Today's briefing: reviews due, top gap, oldest question
 python brain.py graph             Orphans, broken links, hubs, frontier, bridges
 python brain.py decay             What should leave the system
-python brain.py misses            What the work gate caught, and what to promote
+python brain.py misses            Per check: missed / times it ran, and what to promote
 python brain.py schedule <slug> pass|fail   Record a review outcome, reschedule the skill
 python brain.py migrate           Move folders to match config.json, verifying links
 python brain.py selftest          Verify date math, parsing, graph metrics, idempotence
@@ -428,7 +439,7 @@ brain/
     skills/            one file per skill: level 0-5, evidence, next_review
     log/               one file per day
     questions.md       open queue
-    misses.md          what the work gate caught. the bridge between the two loops.
+    misses.md          every gate firing, caught or `| ok`. bridges the two loops.
     checks/            your promoted checks. written by you, not shipped.
     local/             employer specifics. never in git, anywhere.
 ```
@@ -476,6 +487,34 @@ API key is transcription, not redesign.
 
 ---
 
+## Waiting on real use
+
+Everything below is designed, not built. Each one is deferred on purpose, and each has a
+condition that decides it — not an opinion, an observation you can make from your own
+log.
+
+**The rule: nothing here gets built until two weeks of real sessions have run.** Zero
+sessions have run so far. Every item is a guess about which part will break first, and
+guesses made before the first week are usually wrong about the ordering.
+
+| Deferred | Build it when | Why not now |
+|---|---|---|
+| **Rate-based promotion** — promote on missed/fired, not a raw count of 5 | `brain.py misses` visibly misranks: a check at 5/5 sorts below one at 6/180 | A conservative bound (Wilson, used by [open-second-brain](https://github.com/itechmeat/open-second-brain)) is ~20 lines of statistics on data you don't have yet. The `ok` lines are being recorded from day one precisely so this stays possible later. |
+| **Auto-close a promoted check** | a check in `data/checks/` has logged `\| ok` on every gate for a month | A promoted check is currently permanent. It shouldn't be — a habit you fixed should stop being asked about. Needs the denominator to have collected something first. |
+| **Retire with a reason** instead of dropping | you look at `decay` output and want to know what it already discarded | `decay` drops expired misses into nothing. Moving them to `data/retired/` with a reason makes decay auditable. Cheap whenever you want it; nothing depends on it. |
+| **Blocking verify** | Examiner passes you on something you can't do a week later | Today a tired "yes, that makes sense" clears the gate. [Covate](https://covate.org) blocks the assistant until you actually pass. Sound idea; unproven that the soft version fails. |
+| **A single priority score for Scout** | Scout picks something obviously wrong twice | `priority = (1 - confidence) × (days_since_practice + 1) × weight`, from [learn-anything](https://github.com/ChenChenyaqi/learn-anything). One line. Scout currently combines graph metrics and due dates with no explicit rule, which is fine until it isn't. |
+| **Personas synthesized per problem** | the three fixed checks prove they get used, and feel too narrow | Your original proposal. Still the bet against it: a persona generated from your problem statement inherits the framing the blind spot lives in. Revisit with evidence, not before. |
+| **Persona isolation in subagents** (ADR-024) | context bleed between personas actually shows up in a session | Isolation is instructed, not enforced. Nothing in the repo does it, and the README says so rather than implying otherwise. |
+| **`brain.py week`, staleness line, capturing the answer at verify, `export --safe`** | one of them is the thing you reach for and find missing | Four earlier ideas, all plausible, none load-bearing. A system with zero sessions doesn't need more surface. |
+
+Explicitly **not** planned: an `install.lock.json` adapter manifest. `bootstrap` only
+writes files inside this clone, so git already records exactly what it added and
+`git clean` removes it. Tools that need a lockfile need one because they mutate MCP
+configs and editor settings outside their own folder. This one doesn't.
+
+---
+
 ## Troubleshooting
 
 **`/start` does nothing** — your assistant may not support slash commands. Type `start`.
@@ -499,10 +538,11 @@ Repo-level instructions won't do it. Re-read `BOOTSTRAP.md` step 5. If it fires 
 everything instead, the trigger rule in `checks/REGISTRY.md` is being ignored — say
 "lookup only, no gate" and it should pass straight through.
 
-**`promote:` never appears** — nothing is writing `data/misses.md`. The gate logs a
-line only when a question exposes something you hadn't specified; a week of clean
-prompts legitimately produces none. Check the file exists and has lines in the
-documented shape: `- YYYY-MM-DD check-slug | text`.
+**`promote:` never appears** — either nothing is writing `data/misses.md`, or you're
+genuinely not missing anything. Run `python brain.py misses`: rows like `0 / 9` mean the
+gate is running and finding nothing, which is the good outcome. `misses: none logged`
+means it isn't running at all. Check the file exists and has lines in the documented
+shape: `- YYYY-MM-DD check-slug | text`, or `| ok` for a check that passed.
 
 ---
 

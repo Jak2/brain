@@ -207,7 +207,7 @@ Standard library only. `pathlib` (`Path`, `PurePosixPath`, `PureWindowsPath`), `
 | `graph` | Orphans, hubs, frontier, bridges. Below `graph_min_notes`, prints note count only. |
 | `migrate` | Move folders per changed `paths`, `git mv` to preserve history, then **verify** `[[links]]` still resolve (it does not rewrite them — link targets are file stems, so a folder move never changes them). |
 | `decay` | List what should leave the system: mastered skills, expired questions, orphan-archive candidates, expired misses. Never deletes. |
-| `misses` | Count `data/misses.md` by check slug; name promotion candidates (live count ≥ `promotion_threshold`) and expired entries. Read-only. |
+| `misses` | Count `data/misses.md` by check slug as `missed / fired`; name promotion candidates (live miss count ≥ `promotion_threshold`) and expired entries. Read-only. |
 | `schedule <slug> pass\|fail` | Compute the next `interval_days` from the fixed table, set `last_reviewed`/`next_review`, write it back. The only command that writes a skill file. |
 | `selftest` | Assertions against temp fixtures. Exit non-zero on failure. |
 
@@ -292,7 +292,7 @@ request -> trigger? -no-> answer ungated
               v
           restate -> run each check in checks/ and data/checks/ (<=1 question each)
               -> filter to questions that change the build (ask <=3)
-              -> append a miss line to data/misses.md
+              -> append one line per check run to data/misses.md (miss, or `| ok`)
               -> proceed
 ```
 
@@ -311,10 +311,17 @@ only by promotion.
 
 ```
 - YYYY-MM-DD check-slug | what was not specified
+- YYYY-MM-DD check-slug | ok
 ```
 
 Slug is lowercase `[a-z0-9][a-z0-9-]*`. Non-matching lines are prose and are skipped
 silently — the file has a header and the user may annotate it.
+
+A text field of exactly `ok` (case-insensitive) is a **firing with no finding**, not a
+miss. `miss_summary` returns it in the fourth element (`fired`, live counts by check)
+and excludes it from `live`, from `promotions`, and from `expired` — an `ok` has nothing
+to drain through decay. Promotion still counts raw misses; the denominator is recorded
+because it cannot be reconstructed later (ADR-035).
 
 **Promotion.** Live count ≥ `policy.promotion_threshold` (5) makes a slug a candidate:
 the assistant writes `data/checks/<slug>.md` and it joins every subsequent gate.

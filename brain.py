@@ -287,9 +287,12 @@ STARTER = {
     ),
     "misses.md": (
         "# Misses\n\n"
-        "_Written by the work gate in `checks/REGISTRY.md`. One line each:_\n"
-        "_`- YYYY-MM-DD check-slug | what was not specified`._\n"
-        "_Employer-free, same split as notes/. Specifics go to local/._\n"
+        "_Written by the work gate in `checks/REGISTRY.md`. One line per check,_\n"
+        "_every time the gate runs:_\n"
+        "_`- YYYY-MM-DD check-slug | what was not specified`, or_\n"
+        "_`- YYYY-MM-DD check-slug | ok` when the check found nothing._\n"
+        "_The `ok` lines are the denominator. Employer-free, same split as_\n"
+        "_notes/. Specifics go to local/._\n"
     ),
 }
 
@@ -498,24 +501,35 @@ def read_misses(config, root=ROOT):
 
 
 def miss_summary(config, root=ROOT):
-    """(live counts by check, promotion candidates, expired entries).
+    """(live misses by check, promotion candidates, expired misses, live firings).
 
     Only unexpired misses count toward promotion. The question a promotion
     answers is "do you still do this", not "did you ever" - otherwise a habit
     fixed two years ago promotes itself into a permanent check forever.
+
+    A line whose text is `ok` records a gate that fired and found nothing. It
+    is the denominator: without it, five misses could be five out of five or
+    five out of two hundred, and those are different findings. Promotion still
+    counts raw misses - the rate is recorded now because it cannot be
+    reconstructed later, not because anything computes on it yet.
     """
     policy = config["policy"]
     now = today()
-    live, expired = {}, []
+    live, expired, fired = {}, [], {}
     for when, check, text in read_misses(config, root):
         age = (now - when).days
+        passed = text.lower() == "ok"
         if age > policy["miss_expiry_days"]:
-            expired.append((age, check, text))
+            # An `ok` is not a miss, so it has nothing to drain through decay.
+            if not passed:
+                expired.append((age, check, text))
             continue
-        live[check] = live.get(check, 0) + 1
+        fired[check] = fired.get(check, 0) + 1
+        if not passed:
+            live[check] = live.get(check, 0) + 1
     promotions = sorted(
         check for check, n in live.items() if n >= policy["promotion_threshold"])
-    return live, promotions, expired
+    return live, promotions, expired, fired
 
 
 def cmd_misses(config, root=ROOT):
@@ -525,14 +539,17 @@ def cmd_misses(config, root=ROOT):
         print("no data yet - run: python brain.py init")
         return 0
 
-    live, promotions, expired = miss_summary(config, root)
-    if not live and not expired:
+    live, promotions, expired, fired = miss_summary(config, root)
+    if not fired and not expired:
         print("misses: none logged")
         return 0
 
-    print("MISSES %d live, %d expired" % (sum(live.values()), len(expired)))
-    for check in sorted(live, key=lambda c: (-live[c], c)):
-        print("  %-24s %d" % (check, live[check]))
+    print("MISSES %d live, %d expired   (missed / times the check ran)"
+          % (sum(live.values()), len(expired)))
+    # Iterate the firings, not the misses: a check at 0 missed / 9 fired is the
+    # most useful row in the table, and counting only misses hides it.
+    for check in sorted(fired, key=lambda c: (-live.get(c, 0), c)):
+        print("  %-24s %d / %d" % (check, live.get(check, 0), fired[check]))
     if promotions:
         print("promote (seen >= %d): %s" % (
             config["policy"]["promotion_threshold"], ", ".join(promotions)))
@@ -588,7 +605,7 @@ def cmd_due(config, root=ROOT):
 
     # The one point where the work gate feeds the learning loop: something
     # missed this often is a gap worth teaching, not just a checklist line.
-    _, promotions, _ = miss_summary(config, root)
+    promotions = miss_summary(config, root)[1]
     if promotions:
         print("promote: %s - missed >= %d times, teach it before adding a check"
               % (", ".join(promotions), config["policy"]["promotion_threshold"]))

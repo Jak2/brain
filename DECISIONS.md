@@ -701,3 +701,37 @@ Every other caller reaches `read_text_safe` through a glob of files that exist, 
 class as ADR-028 and the `read_text_safe` fix before it — the root guard is the place
 every caller already routes through, and patching callers leaves the next one to
 rediscover it.
+
+---
+
+## ADR-035 — The gate logs its passes, not only its misses
+
+**Date:** 2026-09-20 · **Status:** Accepted
+
+Every check the work gate runs appends a line to `data/misses.md`. A check that found
+nothing logs `- YYYY-MM-DD check-slug | ok`. `miss_summary` returns those as a fourth
+element, `fired`, and `brain.py misses` prints `missed / times the check ran`.
+
+**Why.** Without the passes there is no denominator. Five misses on `tests` could be
+five gates out of five — a standing hole — or five out of two hundred, which is noise
+with a threshold crossed by attrition. The log as originally designed cannot tell those
+apart, and cannot be repaired afterwards: a gate that passed leaves no other trace
+anywhere, so the data is only available at the moment it happens. Recording is cheap
+now and impossible later.
+
+Found by reading `itechmeat/open-second-brain`, which tracks `_applied_count` alongside
+`_violated_count` and derives a Wilson lower bound on the ratio.
+
+**Scope, deliberately.** Promotion still counts raw misses against
+`promotion_threshold`. Nothing computes on the rate yet, because there is no data to
+compute on — zero real sessions have run. This ADR buys the option, it does not exercise
+it. The rate-based promotion, and the auto-close that depends on it, are listed under
+"Waiting on real use" in `README.md` with the observation that would trigger each.
+
+**Rejected:** a separate `data/gates.md` for the passes. Two files that must be read
+together to mean anything, with two chances for one to go missing, and the gate would
+have to write both in the same step regardless. One file, one format, one parser.
+
+**Rejected:** a distinct line shape such as `- YYYY-MM-DD check-slug ok` without the
+pipe. It needs a second regex for no gain; the existing shape already carries a free-text
+field, and a miss whose entire description is the word "ok" says nothing worth counting.

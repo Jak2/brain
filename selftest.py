@@ -895,10 +895,11 @@ def test_misses_counts_by_check():
             (2, "tests", "empty input unhandled"),
             (3, "cost", "no smaller version considered"),
         ])
-        live, promotions, expired = brain.miss_summary(config, root)
+        live, promotions, expired, fired = brain.miss_summary(config, root)
         assert live == {"tests": 2, "cost": 1}, live
         assert promotions == [], promotions
         assert expired == [], expired
+        assert fired == {"tests": 2, "cost": 1}, fired
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
 
@@ -911,7 +912,7 @@ def test_misses_promotes_at_threshold():
         threshold = config["policy"]["promotion_threshold"]
         _write_misses(root, [(i, "rollback", "no undo path") for i in range(threshold)]
                       + [(1, "cost", "no cheaper version")])
-        _, promotions, _ = brain.miss_summary(config, root)
+        promotions = brain.miss_summary(config, root)[1]
         assert promotions == ["rollback"], promotions
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
@@ -926,10 +927,11 @@ def test_misses_expired_do_not_count_toward_promotion():
         threshold = config["policy"]["promotion_threshold"]
         _write_misses(root, [(old + i, "rollback", "no undo path")
                              for i in range(threshold)])
-        live, promotions, expired = brain.miss_summary(config, root)
+        live, promotions, expired, fired = brain.miss_summary(config, root)
         assert live == {}, live
         assert promotions == [], "a habit fixed long ago must not promote itself"
         assert len(expired) == threshold, expired
+        assert fired == {}, "an expired line is not a live firing either"
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
 
@@ -963,7 +965,7 @@ def test_misses_ignores_prose_and_malformed_lines():
             "- %s tests |\n"
             % ((datetime.date.today().isoformat(),) * 3),
             encoding="utf-8")
-        live, _, _ = brain.miss_summary(config, root)
+        live = brain.miss_summary(config, root)[0]
         assert live == {"tests": 1}, live
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
@@ -975,11 +977,65 @@ def test_misses_absent_file_never_raises():
         config = brain.load_config()
         _silent(brain.cmd_init, config, root)
         (root / "data" / "misses.md").unlink()
-        assert brain.miss_summary(config, root) == ({}, [], [])
+        assert brain.miss_summary(config, root) == ({}, [], [], {})
         result, out, err = _capture(brain.cmd_misses, config, root)
         assert result == 0, result
         assert "none logged" in out, out
         assert err == "", err
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_ok_lines_count_as_firings_not_misses():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        _write_misses(root, [
+            (1, "tests", "no failing case named"),
+            (2, "tests", "ok"),
+            (3, "tests", "OK"),
+            (4, "cost", "ok"),
+        ])
+        live, _, _, fired = brain.miss_summary(config, root)
+        assert live == {"tests": 1}, live
+        assert fired == {"tests": 3, "cost": 1}, fired
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_misses_shows_a_check_that_never_missed():
+    """0 missed / 9 fired is the most informative row, so it must be printed.
+
+    A table built from the miss counts alone would drop the row entirely and
+    the gate would look like it had never run.
+    """
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        _write_misses(root, [(i + 1, "operations", "ok") for i in range(3)])
+        result, out, err = _capture(brain.cmd_misses, config, root)
+        assert result == 0, result
+        assert "operations" in out, out
+        assert "0 / 3" in out, out
+        assert err == "", err
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_expired_ok_lines_do_not_drain_through_decay():
+    """An `ok` is not a miss, so there is nothing to report when it expires."""
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        old = config["policy"]["miss_expiry_days"] + 1
+        _write_misses(root, [(old, "tests", "ok"), (old, "cost", "stale one")])
+        stale = [a for a in brain.decay_actions(config, root)
+                 if a.startswith("expired miss")]
+        assert len(stale) == 1, stale
+        assert "stale one" in stale[0], stale
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
 

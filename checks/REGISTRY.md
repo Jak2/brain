@@ -42,12 +42,18 @@ produces at most one question.
 rest. **Ask at most three.** If more than three survive, the scope is too big to start —
 say that instead, and propose a smaller first slice.
 
-**4. Log.** For each question that exposed something the person had not specified,
-append one line to `data/misses.md`:
+**4. Log.** Append one line to `data/misses.md` **for every check you ran**, not only
+the ones that found something:
 
 ```
 - YYYY-MM-DD check-slug | what they did not specify
+- YYYY-MM-DD check-slug | ok
 ```
+
+`ok` means the check ran and found nothing — they had already covered it, or it did not
+apply. Those lines are the denominator: five misses out of five runs and five out of two
+hundred are different findings, and without the `ok` lines they look identical. A gate
+that logged only misses cannot tell them apart afterwards, so log both at the time.
 
 The date is today. The slug is the check's `slug:` field. Keep the text employer-free —
 the same split as `AGENTS.md` standing rule 3. Specifics go to `data/local/`.
@@ -70,9 +76,14 @@ framing with the gap in it.
 
 ## Promotion
 
-`python brain.py misses` counts the log. A check slug that appears
-`policy.promotion_threshold` times or more (default 5) while still unexpired is a
-**promotion candidate**: it is not an occasional oversight, it is a standing hole.
+`python brain.py misses` counts the log and prints `missed / times the check ran`. A
+check slug **missed** `policy.promotion_threshold` times or more (default 5) while still
+unexpired is a **promotion candidate**: it is not an occasional oversight, it is a
+standing hole.
+
+Promotion counts raw misses today, not the rate. The `ok` lines are recorded anyway
+because a denominator cannot be reconstructed after the fact — see "Waiting on real use"
+in `README.md`.
 
 Promote it by writing `data/checks/<slug>.md` in the same shape as the files here. It
 then runs on every gate, forever, exactly like the three fixed ones.

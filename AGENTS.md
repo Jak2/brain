@@ -59,9 +59,9 @@ There is a second surface: `checks/REGISTRY.md`, which runs *during real work* a
 catches what they forgot to ask for. It is a separate graph with its own trigger and its
 own nodes — read it when helping with work, not when teaching.
 
-The two meet at `data/misses.md`. The gate writes what was missed; `/start` reads it
-back; a slug missed `promotion_threshold` times becomes both a standing check and a
-candidate lesson. Do not run the gate's checks as part of a teaching session, and do not
+The two meet at `data/misses.md`. The gate writes one line per check it runs — what was
+missed, or `| ok` when the check found nothing; `/start` reads it back; a slug missed
+`promotion_threshold` times becomes both a standing check and a candidate lesson. Do not run the gate's checks as part of a teaching session, and do not
 run the teaching personas as part of a work session. Different graphs.
 
 ## Workflow graph
