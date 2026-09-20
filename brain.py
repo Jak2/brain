@@ -18,6 +18,7 @@ DEFAULT_CONFIG = {
         "skills": "data/skills",
         "log": "data/log",
         "local": "data/local",
+        "checks": "data/checks",
     },
     "policy": {
         "intervals_days": [1, 3, 7, 16, 35],
@@ -26,6 +27,8 @@ DEFAULT_CONFIG = {
         "orphan_archive_days": 90,
         "graph_min_notes": 30,
         "daily_items": 3,
+        "miss_expiry_days": 90,
+        "promotion_threshold": 5,
     },
     "assistants": [],
 }
@@ -212,9 +215,18 @@ def read_text_safe(path):
 
     UnicodeDecodeError is a ValueError, not an OSError - a single bad byte in a
     note must not take down the briefing.
+
+    A file that isn't there is absence, not corruption, and returns None
+    without a warning: questions.md and misses.md are both legitimately
+    missing on a brain that has never used them, and a warning printed on
+    every briefing is how output stops being read. Every other caller globs
+    for files that exist, so FileNotFoundError there means a race, not a
+    state worth reporting either.
     """
     try:
         return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
     except (OSError, ValueError) as exc:
         warn("%s: %s - skipped" % (path.name, exc))
         return None
@@ -272,6 +284,12 @@ STARTER = {
         "# Handover\n\n"
         "_In-flight session state only. Your knowledge is in notes/ and skills/._\n\n"
         "Nothing in flight.\n"
+    ),
+    "misses.md": (
+        "# Misses\n\n"
+        "_Written by the work gate in `checks/REGISTRY.md`. One line each:_\n"
+        "_`- YYYY-MM-DD check-slug | what was not specified`._\n"
+        "_Employer-free, same split as notes/. Specifics go to local/._\n"
     ),
 }
 
@@ -455,6 +473,74 @@ def _open_questions(config, root):
     return [line[2:].strip() for line in lines if line.startswith("- ")]
 
 
+MISS_RE = re.compile(r"^- (\d{4}-\d{2}-\d{2})\s+([a-z0-9][a-z0-9-]*)\s*\|\s*(\S.*)$")
+
+
+def read_misses(config, root=ROOT):
+    """Every parseable line of misses.md as (date, check, text). Never raises.
+
+    Lines that don't match are prose, not data - the file has a header and the
+    person may annotate it. Skipped silently, unlike a malformed skill file:
+    a note in your own log is not a defect worth a warning on every briefing.
+    """
+    path = root / config["paths"]["data"] / "misses.md"
+    text = read_text_safe(path)
+    out = []
+    for line in (text.splitlines() if text else []):
+        match = MISS_RE.match(line.strip())
+        if not match:
+            continue
+        # The regex fixes the shape, not the validity - "2026-13-45" matches.
+        when = parse_date(match.group(1))
+        if when is not None:
+            out.append((when, match.group(2), match.group(3).strip()))
+    return out
+
+
+def miss_summary(config, root=ROOT):
+    """(live counts by check, promotion candidates, expired entries).
+
+    Only unexpired misses count toward promotion. The question a promotion
+    answers is "do you still do this", not "did you ever" - otherwise a habit
+    fixed two years ago promotes itself into a permanent check forever.
+    """
+    policy = config["policy"]
+    now = today()
+    live, expired = {}, []
+    for when, check, text in read_misses(config, root):
+        age = (now - when).days
+        if age > policy["miss_expiry_days"]:
+            expired.append((age, check, text))
+            continue
+        live[check] = live.get(check, 0) + 1
+    promotions = sorted(
+        check for check, n in live.items() if n >= policy["promotion_threshold"])
+    return live, promotions, expired
+
+
+def cmd_misses(config, root=ROOT):
+    """What the work gate caught, and what has earned a standing check."""
+    data = root / config["paths"]["data"]
+    if not data.is_dir():
+        print("no data yet - run: python brain.py init")
+        return 0
+
+    live, promotions, expired = miss_summary(config, root)
+    if not live and not expired:
+        print("misses: none logged")
+        return 0
+
+    print("MISSES %d live, %d expired" % (sum(live.values()), len(expired)))
+    for check in sorted(live, key=lambda c: (-live[c], c)):
+        print("  %-24s %d" % (check, live[check]))
+    if promotions:
+        print("promote (seen >= %d): %s" % (
+            config["policy"]["promotion_threshold"], ", ".join(promotions)))
+        print("  write %s/<slug>.md - it becomes a standing check on every gate"
+              % config["paths"]["checks"])
+    return 0
+
+
 def cmd_due(config, root=ROOT):
     """Print the briefing. Must never raise - a failed briefing kills the habit."""
     data = root / config["paths"]["data"]
@@ -500,6 +586,13 @@ def cmd_due(config, root=ROOT):
     if questions:
         print("question: " + questions[0])
 
+    # The one point where the work gate feeds the learning loop: something
+    # missed this often is a gap worth teaching, not just a checklist line.
+    _, promotions, _ = miss_summary(config, root)
+    if promotions:
+        print("promote: %s - missed >= %d times, teach it before adding a check"
+              % (", ".join(promotions), config["policy"]["promotion_threshold"]))
+
     pending = decay_actions(config, root)
     if pending:
         print("decay: %d pending - run: python brain.py decay" % len(pending))
@@ -526,6 +619,9 @@ def decay_actions(config, root=ROOT):
         asked = parse_date(head)
         if asked and (now - asked).days > policy["question_expiry_days"]:
             actions.append("expired question (%dd): %s" % ((now - asked).days, rest))
+
+    for age, check, text in miss_summary(config, root)[2]:
+        actions.append("expired miss (%dd, %s): %s" % (age, check, text))
 
     adj, nodes = build_graph(config, root)
     notes_dir = root / config["paths"]["notes"]
@@ -605,7 +701,7 @@ def cmd_schedule(slug, passed, config, root=ROOT):
 def cmd_init(config, root=ROOT):
     """Create data/ and its own git repo. Idempotent. Never overwrites content."""
     data = root / config["paths"]["data"]
-    for key in ("notes", "skills", "log", "local"):
+    for key in ("notes", "skills", "log", "local", "checks"):
         (root / config["paths"][key]).mkdir(parents=True, exist_ok=True)
 
     for name, body in STARTER.items():
@@ -734,6 +830,7 @@ def build_parser():
     sub.add_parser("graph", help="orphans, hubs, frontier, bridges")
     sub.add_parser("migrate", help="reconcile folders with config.json paths")
     sub.add_parser("decay", help="what should leave the system")
+    sub.add_parser("misses", help="what the work gate caught, and what to promote")
     sched = sub.add_parser("schedule", help="record a review outcome for one skill")
     sched.add_argument("slug")
     sched.add_argument("outcome", choices=["pass", "fail"])
@@ -757,6 +854,8 @@ def main(argv=None):
         return cmd_migrate(load_config())
     if args.command == "decay":
         return cmd_decay(load_config())
+    if args.command == "misses":
+        return cmd_misses(load_config())
     if args.command == "schedule":
         return cmd_schedule(args.slug, args.outcome == "pass", load_config())
     if args.command == "bootstrap":

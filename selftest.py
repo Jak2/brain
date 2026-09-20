@@ -864,6 +864,159 @@ def test_interview_template_has_five_questions():
         assert ("%d." % n) in text, "interview is missing question %d" % n
 
 
+def _write_misses(root, entries):
+    """Seed data/misses.md. entries are (days_ago, check, text)."""
+    today = datetime.date.today()
+    lines = ["# Misses", ""]
+    for days_ago, check, text in entries:
+        when = (today - datetime.timedelta(days=days_ago)).isoformat()
+        lines.append("- %s %s | %s" % (when, check, text))
+    (root / "data" / "misses.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_init_creates_checks_folder_and_miss_log():
+    root = _tmp_root()
+    try:
+        _silent(brain.cmd_init, brain.load_config(), root)
+        assert (root / "data" / "checks").is_dir(), "promoted checks need a home"
+        assert (root / "data" / "misses.md").is_file()
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_misses_counts_by_check():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        _write_misses(root, [
+            (1, "tests", "no failing case named"),
+            (2, "tests", "empty input unhandled"),
+            (3, "cost", "no smaller version considered"),
+        ])
+        live, promotions, expired = brain.miss_summary(config, root)
+        assert live == {"tests": 2, "cost": 1}, live
+        assert promotions == [], promotions
+        assert expired == [], expired
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_misses_promotes_at_threshold():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        threshold = config["policy"]["promotion_threshold"]
+        _write_misses(root, [(i, "rollback", "no undo path") for i in range(threshold)]
+                      + [(1, "cost", "no cheaper version")])
+        _, promotions, _ = brain.miss_summary(config, root)
+        assert promotions == ["rollback"], promotions
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_misses_expired_do_not_count_toward_promotion():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        old = config["policy"]["miss_expiry_days"] + 10
+        threshold = config["policy"]["promotion_threshold"]
+        _write_misses(root, [(old + i, "rollback", "no undo path")
+                             for i in range(threshold)])
+        live, promotions, expired = brain.miss_summary(config, root)
+        assert live == {}, live
+        assert promotions == [], "a habit fixed long ago must not promote itself"
+        assert len(expired) == threshold, expired
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_misses_expired_drain_through_decay():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        old = config["policy"]["miss_expiry_days"] + 1
+        _write_misses(root, [(old, "tests", "stale one"), (1, "tests", "fresh one")])
+        actions = brain.decay_actions(config, root)
+        stale = [a for a in actions if a.startswith("expired miss")]
+        assert len(stale) == 1, actions
+        assert "stale one" in stale[0], stale
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_misses_ignores_prose_and_malformed_lines():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        (root / "data" / "misses.md").write_text(
+            "# Misses\n\nSome note to myself about the format.\n"
+            "- not-a-date tests | nope\n"
+            "- 2026-13-45 tests | impossible date\n"
+            "- %s tests | counted\n"
+            "- %s Tests | uppercase slug is not a slug\n"
+            "- %s tests |\n"
+            % ((datetime.date.today().isoformat(),) * 3),
+            encoding="utf-8")
+        live, _, _ = brain.miss_summary(config, root)
+        assert live == {"tests": 1}, live
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_misses_absent_file_never_raises():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        (root / "data" / "misses.md").unlink()
+        assert brain.miss_summary(config, root) == ({}, [], [])
+        result, out, err = _capture(brain.cmd_misses, config, root)
+        assert result == 0, result
+        assert "none logged" in out, out
+        assert err == "", err
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_misses_without_data_folder_points_at_init():
+    root = _tmp_root()
+    try:
+        result, out, _ = _capture(brain.cmd_misses, brain.load_config(), root)
+        assert result == 0, result
+        assert "brain.py init" in out, out
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_due_surfaces_promotion_candidates():
+    root = _tmp_root()
+    try:
+        config = brain.load_config()
+        _silent(brain.cmd_init, config, root)
+        _write_skill(root, "python-async", 2, datetime.date.today().isoformat())
+        threshold = config["policy"]["promotion_threshold"]
+        _write_misses(root, [(i, "rollback", "no undo path") for i in range(threshold)])
+        result, out, _ = _capture(brain.cmd_due, config, root)
+        assert result == 0, result
+        assert "promote: rollback" in out, out
+    finally:
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def test_config_rejects_checks_path_outside_data():
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        config = _load_config_from({"paths": {"checks": "elsewhere"}})
+    assert config["paths"]["checks"] == "data/checks", config["paths"]
+    assert "paths.'checks'" in buf.getvalue(), "must warn: " + buf.getvalue()
+
+
 STDLIB_ALLOWLIST = {
     "argparse", "ast", "contextlib", "datetime", "io", "json", "pathlib", "re",
     "shutil", "subprocess", "sys", "tempfile", "traceback", "brain", "selftest",

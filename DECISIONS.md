@@ -549,3 +549,155 @@ things a sibling `Gets` section reads. It doesn't — `Produces` and `Gets` are 
 between personas in the same loop, not a registry of every file `brain.py` touches, and
 none of the four gaps here were between two personas in one loop; they were between the
 engine and the entire protocol.
+
+---
+
+## ADR-029 — The work gate is a second surface, not an extension of the learning loop
+
+**Date:** 2026-09-20 · **Status:** Accepted
+
+`checks/REGISTRY.md` is a separate entry point with its own trigger, its own nodes, and
+its own log. It runs during real work, in whatever repo the work is in. `AGENTS.md`
+keeps running at `/start` and `/end`, in this repo. They share exactly one file:
+`data/misses.md`.
+
+**Why.** The originating complaint was two problems wearing one sentence: *"I don't know
+enough"* and *"I know it and forgot to think about it at 2pm."* The second is not a
+knowledge gap — being taught about testing does not stop you forgetting to write a test.
+Teaching is the wrong instrument for an attention failure, so it gets a different
+surface with a different cadence: minutes, not weeks.
+
+Keeping them separate also keeps each one cheap. Folding the checks into the teaching
+personas would mean loading the whole learning protocol during ordinary work, and
+loading the work gate during a lesson. Neither is wanted.
+
+**Why they still connect.** A fast guard alone is a nag, and people learn to click past
+nags. A slow lesson alone never attaches to real work. The miss log is the join: the
+gate writes what you missed, `/start` reads it back, and something missed repeatedly
+becomes a lesson with evidence attached rather than a guess about what you need.
+
+**Rejected:** one protocol covering both. It would have made every work session pay the
+cost of the teaching loop, and every lesson pay the cost of the gate — the reliable way
+to get both switched off.
+
+---
+
+## ADR-030 — Fixed adversarial checks, not personas synthesized per problem
+
+**Date:** 2026-09-20 · **Status:** Accepted
+
+Three checks ship — `tests`, `cost`, `operations` — and they run on every gated request
+whether or not it hints at them. The assistant does not invent new personas from the
+problem statement.
+
+**Why.** The proposal on the table was for the assistant to read the problem statement
+and generate the personas relevant to it. That fails for a specific reason: the blind
+spot lives in the framing, and anything derived from the framing inherits it. An
+assistant generating personas from your prompt generates the ones your prompt already
+implies, so it reliably reproduces the miss it was meant to catch. A check only sees
+what you didn't think to mention if it runs unconditionally.
+
+`operations` is the clearest case. Nobody who forgot to think about 3am failure writes a
+prompt from which an operations persona would be synthesized.
+
+**Why only three.** They cover the three misses the user actually named — skipped tests,
+unquestioned feature ROI, and narrow focus. More checks means more questions per
+request, and question volume is what kills the gate. The set grows by evidence, through
+promotion, not by guessing.
+
+**Rejected:** per-problem persona synthesis as the v1 mechanism. Deferred, not dead — it
+becomes worth revisiting once the fixed gate has proven it gets used, and it would then
+sit *on top* of the fixed set, never in place of it.
+
+---
+
+## ADR-031 — The gate has a trigger condition
+
+**Date:** 2026-09-20 · **Status:** Accepted
+
+The gate runs on requests that write non-trivial code, change a design, pick a
+dependency, or cost more than roughly thirty minutes. Lookups, explanations and one-line
+fixes pass straight through, ungated.
+
+**Why.** A gate that fires on every message is the same failure mode as the unbounded
+queue that decay exists to prevent, arriving faster. Ask "what does this function do"
+and get a three-persona review, and the gate is off within the week — at which point it
+catches nothing at all, which is strictly worse than a gate that catches two things out
+of three.
+
+The tie-break is deliberately asymmetric: when it is unclear which side a request falls
+on, gate it. A wrong "no gate" costs a day of rework; a wrong "gate" costs one extra
+question.
+
+**Rejected:** running on everything and relying on the user to skip it. Opting out
+repeatedly is indistinguishable from turning it off, and takes longer.
+
+**Rejected:** an explicit invoke-only command. It only fires when you already suspect
+you are missing something, which is exactly when you are not.
+
+---
+
+## ADR-032 — Promoted checks live in `data/checks/`, never in the system repo
+
+**Date:** 2026-09-20 · **Status:** Accepted
+
+The three shipped checks live in `checks/`. Checks promoted from your own repeated
+misses are written to `data/checks/<slug>.md`, and the registry reads both.
+
+**Why.** Standing rule 2 — never write to the system repo — is what keeps `git pull`
+clean and keeps personal material out of a repo that is public and pushable. A promoted
+check is personal by construction: it is derived from your own miss log. `data/` is the
+repo with no remote, so that is where it belongs.
+
+This also makes promotion a plain file creation, the same move Critic already makes when
+it writes a new skill file. Nothing new to learn.
+
+**Rejected:** appending promoted checks to the shipped files. It would dirty the working
+tree against upstream, produce a conflict on the next `git pull`, and put personal
+content one `git add` away from a public repo.
+
+---
+
+## ADR-033 — Only unexpired misses count toward promotion
+
+**Date:** 2026-09-20 · **Status:** Accepted
+
+A miss older than `policy.miss_expiry_days` (90) is excluded from the promotion count
+and drains through `brain.py decay`. Promotion at `policy.promotion_threshold` (5)
+counts live entries only.
+
+**Why.** The question a promotion answers is *do you still do this*, not *did you ever*.
+Counting all history means a habit you fixed two years ago eventually promotes itself
+into a permanent check and stays there — the queue-becomes-guilt-machine failure, with
+extra steps. Expiry makes the check set self-correcting: stop making a mistake and it
+stops being tracked.
+
+The same reasoning already governs `question_expiry_days` and `orphan_archive_days`. The
+drain exists before the queue does, deliberately, for the third time.
+
+**Rejected:** a decaying weight per entry instead of a hard cutoff. More accurate,
+and it makes "why did this promote?" unanswerable by reading the file — which is the
+property that matters for a file the user is supposed to trust.
+
+---
+
+## ADR-034 — A missing file is absence, not corruption
+
+**Date:** 2026-09-20 · **Status:** Accepted
+
+`read_text_safe` returns `None` without warning on `FileNotFoundError`, and warns only
+for a file that exists but cannot be read.
+
+**Why.** Found while testing `misses.md`: a brain that has never logged a miss printed
+`warn: misses.md: [Errno 2] No such file or directory` on every single briefing.
+`questions.md` had the same behaviour already. Both files are legitimately absent on a
+new or lightly-used brain, and a warning that fires in the normal case trains the user
+to ignore warnings — which costs far more than the one it was reporting.
+
+Every other caller reaches `read_text_safe` through a glob of files that exist, so a
+`FileNotFoundError` there means a race, not a state worth reporting either.
+
+**Rejected:** special-casing the two optional files at their call sites. Same defect
+class as ADR-028 and the `read_text_safe` fix before it — the root guard is the place
+every caller already routes through, and patching callers leaves the next one to
+rediscover it.

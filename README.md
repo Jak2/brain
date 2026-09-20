@@ -6,6 +6,9 @@ Clone it. Point your assistant at it. It interviews you, finds what you don't kn
 teaches you, tests whether it stuck, writes it down, and brings it back before you
 forget it.
 
+It also sits beside you while you work and asks the questions you forgot to ask —
+then turns the ones you keep forgetting into lessons.
+
 No API key. No pip install. No account. No network after the clone.
 Works on a locked-down corporate laptop.
 
@@ -21,8 +24,11 @@ They aren't faster readers. Two things separate them:
    — see [The knowledge graph](#the-knowledge-graph).
 2. **Their state lives outside their head.** They get interrupted and lose nothing,
    because every loop they're running has a checkpoint on disk.
+3. **They ask a different first question.** Not "how do I build this" but "what breaks,
+   what does it cost, and how will we know." That's what makes them solve in minutes
+   what took you hours — see [The work gate](#the-work-gate).
 
-`brain` is built to produce both on purpose instead of by luck.
+`brain` is built to produce all three on purpose instead of by luck.
 
 ## What this is not
 
@@ -57,9 +63,25 @@ have — and say:
 
 > Read BOOTSTRAP.md and follow it.
 
-That is the whole setup. It will name which assistant it is and ask you to confirm,
-install that assistant's adapter, create `data/`, and then start the cold-start
-interview.
+That is the whole setup:
+
+```
+  git clone ──> open the folder ──> "Read BOOTSTRAP.md and follow it."
+                in your assistant                    │
+      ┌──────────────────────────────────────────────┘
+      v
+  identify ──> install ──> create ──> offer the ──> cold-start ──> you have
+  yourself     adapter     data/      work-gate     interview      learned
+               additive    no remote  pointer       5 questions    one thing
+                                      optional
+      │
+      └──> every day after:  /start  ...  /end
+```
+
+Step 4 is the only one that asks anything of you beyond answers: one line pasted into
+your assistant's global settings, pointing at this clone, so the work gate also runs in
+the repos you actually work in. Skip it and you lose only that — the learning loop is
+unaffected.
 
 **What the first session looks like.** Five questions about your work and where you
 want to be, then it writes `data/target.md` and 8–12 skill files, then it teaches you
@@ -83,6 +105,25 @@ defines both, so every assistant understands them.
 ---
 
 ## How it works
+
+Two surfaces, one file joining them.
+
+```
+  WORK SURFACE                                    LEARNING SURFACE
+  checks/REGISTRY.md                              AGENTS.md
+  runs while you build, in any repo               runs at /start and /end
+        │                                                    ^
+        │  "you didn't say what happens                      │  "missed 5 times.
+        │   when this fails"                                 │   that's a real gap,
+        v                                                    │   not a checklist line"
+        └──────────────>  data/misses.md  ───────────────────┘
+                          the bridge
+```
+
+The work gate is fast and runs in minutes. The learning loop is slow and runs in weeks.
+The fast one catches the miss; the slow one removes the reason for it. Neither works
+alone: a nag you learn to click past changes nothing, and a lesson you never connect to
+real work never gets used.
 
 ### Two repositories, on purpose
 
@@ -111,9 +152,16 @@ You still get commits, history, and undo on your own brain — locally.
 ### The day loop
 
 ```
-/start ──> assess ──> select ──> teach ──> verify ──┬─(you can explain it)──> capture ──> schedule ──> /end
-                                    ^               │
-                                    └──(you can't)──┘  re-teach, differently
+            Scout      Teacher     Examiner              Scribe    brain.py
+/start ──> assess ──> select ──> teach ──> verify ──┬──> capture ──> schedule ──> /end
+                        ^           ^               │   you explained it
+                        │           └──(you can't)──┤   in your own words
+                        │            re-teach it    │
+                        │            differently    │
+                        │                           │ 3rd failure
+                        │         Critic  <─────────┘
+                        └─────────────────┘
+                     names the missing prerequisite
 ```
 
 **The verify step is the point.** Being taught something and being able to produce it
@@ -132,6 +180,69 @@ teaches it again a *different* way — not louder, differently.
 Every loop can be abandoned mid-way and resumed, because its state is a file, not a
 conversation.
 
+### The work gate
+
+The learning loop handles *what you don't know*. This handles *what you know perfectly
+well and forgot to think about at 2pm on a Thursday* — no tests, no rollback, three days
+spent on a feature nobody measured.
+
+It lives in [`checks/REGISTRY.md`](checks/REGISTRY.md) and runs in whatever repo you're
+working in, not this one.
+
+```
+request ──> is it a lookup? ──yes──> just answer. no gate.
+                 │
+                 no  (writes code, changes design, costs > ~30 min)
+                 v
+            restate it, including every assumption you filled in silently
+                 v
+            run every check in checks/ and data/checks/   (one question each, max)
+                 v
+            keep only questions whose answer changes the build   (ask at most 3)
+                 v
+            log what wasn't specified ──> data/misses.md
+                 v
+            build it
+```
+
+**The trigger rule is load-bearing.** A gate that fires on "what does this function do"
+gets switched off in three days, and then it catches nothing. Lookups pass straight
+through.
+
+Three checks ship, and they run whether or not your prompt hints at them:
+
+| Check | Asks |
+|---|---|
+| [tests](checks/tests.md) | how do we know it works, and how do we find out when it breaks |
+| [cost](checks/cost.md) | is this worth it, and what's the smaller version |
+| [operations](checks/operations.md) | what happens at 3am when it fails |
+
+**They're fixed on purpose.** An assistant that invents personas from your problem
+statement generates them from the same framing that contains the blind spot, so it
+reproduces the miss instead of catching it. Unconditional checks are the only kind that
+see what you didn't think to mention.
+
+#### Promotion — how a miss becomes a lesson
+
+```
+  gate catches it ──> data/misses.md ──> brain.py misses
+                                              │
+                    ┌─────────────────────────┴───────────────┐
+                    │ seen >= 5, still fresh                  │ older than 90 days
+                    v                                         v
+       data/checks/<slug>.md          AND          brain.py decay drops it
+       a standing check, forever                   (it no longer describes you)
+                    │
+                    └──> brain.py due surfaces it at /start ──> Scout teaches it
+```
+
+Only unexpired misses count toward promotion. The question is whether you *still* do
+this, not whether you once did — otherwise a habit you fixed two years ago promotes
+itself into a permanent check.
+
+Promoted checks land in `data/checks/`, never in the system repo. They're yours, and
+they belong in the repo that has no remote.
+
 ### Decay — why the queue won't bury you
 
 Most second brains die from an unbounded to-do queue. This one drains itself:
@@ -139,6 +250,7 @@ Most second brains die from an unbounded to-do queue. This one drains itself:
 - A skill at level 5 leaves the review rotation.
 - A question unanswered for 60 days closes as *"turned out not to matter."*
 - A note never linked in 90 days becomes an archive candidate.
+- A logged miss older than 90 days drops. It stops describing you.
 
 Nothing accumulates forever. That's deliberate, and it's why the system survives a busy
 month.
@@ -275,6 +387,7 @@ python brain.py bootstrap <name>  Install that assistant's adapter (additive, id
 python brain.py due               Today's briefing: reviews due, top gap, oldest question
 python brain.py graph             Orphans, broken links, hubs, frontier, bridges
 python brain.py decay             What should leave the system
+python brain.py misses            What the work gate caught, and what to promote
 python brain.py schedule <slug> pass|fail   Record a review outcome, reschedule the skill
 python brain.py migrate           Move folders to match config.json, verifying links
 python brain.py selftest          Verify date math, parsing, graph metrics, idempotence
@@ -302,6 +415,7 @@ brain/
   brain.py             the engine. stdlib only.
   config.json          paths and policy. the only file bootstrap edits.
   personas/            scout, teacher, examiner, scribe, critic, archivist
+  checks/              THE WORK GATE — registry, tests, cost, operations
   templates/           note, skill, log, interview
   adapters/            per-assistant command templates
   docs/design.md       full architecture
@@ -314,6 +428,8 @@ brain/
     skills/            one file per skill: level 0-5, evidence, next_review
     log/               one file per day
     questions.md       open queue
+    misses.md          what the work gate caught. the bridge between the two loops.
+    checks/            your promoted checks. written by you, not shipped.
     local/             employer specifics. never in git, anywhere.
 ```
 
@@ -326,7 +442,7 @@ brain/
 Your `[[links]]` need no rewriting — link targets are file stems, so a folder move
 leaves them all valid, and `migrate` verifies that rather than assuming it.
 
-`notes`, `skills`, and `log` are renameable this way. `data` and `local` are **pinned**
+`notes`, `skills`, `log`, and `checks` are renameable this way. `data` and `local` are **pinned**
 — renaming either one is rejected with a warning and falls back to the default, because
 the outer `.gitignore` matches the literal string `data/` and `data/.gitignore` matches
 the literal string `local/`; renaming either would silently drop a gitignore layer and
@@ -376,6 +492,17 @@ workspace root, not a parent directory.
 
 **`git push` fails in `data/`** — working as designed. See
 [Using this at work](#using-this-at-work).
+
+**The work gate never fires** — it only runs in repos other than this one, and only if
+you pasted the pointer line into your assistant's *global* settings during bootstrap.
+Repo-level instructions won't do it. Re-read `BOOTSTRAP.md` step 5. If it fires on
+everything instead, the trigger rule in `checks/REGISTRY.md` is being ignored — say
+"lookup only, no gate" and it should pass straight through.
+
+**`promote:` never appears** — nothing is writing `data/misses.md`. The gate logs a
+line only when a question exposes something you hadn't specified; a week of clean
+prompts legitimately produces none. Check the file exists and has lines in the
+documented shape: `- YYYY-MM-DD check-slug | text`.
 
 ---
 

@@ -63,6 +63,7 @@ brain/                          public system repo
   brain.py
   config.json
   personas/{scout,teacher,examiner,scribe,critic,archivist}.md
+  checks/{REGISTRY,tests,cost,operations}.md
   templates/{note,skill,log,interview}.md
   adapters/
     claude/{CLAUDE.md,commands/{start,end}.md}
@@ -73,15 +74,19 @@ brain/                          public system repo
   .gitignore                    -> data/
 
   data/                         created by `brain.py init`; own .git, no remote
-    target.md  state.json  HANDOVER.md  questions.md
-    notes/  skills/  log/
+    target.md  state.json  HANDOVER.md  questions.md  misses.md
+    notes/  skills/  log/  checks/
     local/                      gitignored inside data/ as well
     .gitignore                  -> local/
 ```
 
-`target.md`, `HANDOVER.md`, and `questions.md` are not templates — `cmd_init` writes
-their starting content from the `STARTER` dict in `brain.py` directly. Only `note.md`,
-`skill.md`, `log.md`, and `interview.md` live in `templates/`.
+`target.md`, `HANDOVER.md`, `questions.md`, and `misses.md` are not templates —
+`cmd_init` writes their starting content from the `STARTER` dict in `brain.py` directly.
+Only `note.md`, `skill.md`, `log.md`, and `interview.md` live in `templates/`.
+
+`checks/` in the system repo holds the three shipped checks and is read-only to the
+assistant. `data/checks/` holds checks promoted from the user's own miss log and is
+written by the assistant (ADR-032). The registry reads both.
 
 ## 4. File formats
 
@@ -201,7 +206,8 @@ Standard library only. `pathlib` (`Path`, `PurePosixPath`, `PureWindowsPath`), `
 | `due` | Print the briefing: overdue reviews, top gap, oldest open question, interrupted session. |
 | `graph` | Orphans, hubs, frontier, bridges. Below `graph_min_notes`, prints note count only. |
 | `migrate` | Move folders per changed `paths`, `git mv` to preserve history, then **verify** `[[links]]` still resolve (it does not rewrite them — link targets are file stems, so a folder move never changes them). |
-| `decay` | List what should leave the system: mastered skills, expired questions, orphan-archive candidates. Never deletes. |
+| `decay` | List what should leave the system: mastered skills, expired questions, orphan-archive candidates, expired misses. Never deletes. |
+| `misses` | Count `data/misses.md` by check slug; name promotion candidates (live count ≥ `promotion_threshold`) and expired entries. Read-only. |
 | `schedule <slug> pass\|fail` | Compute the next `interval_days` from the fixed table, set `last_reviewed`/`next_review`, write it back. The only command that writes a skill file. |
 | `selftest` | Assertions against temp fixtures. Exit non-zero on failure. |
 
@@ -215,6 +221,7 @@ interrupted: teacher/python-async (1 attempts, opened 2026-09-19T14:02:00)
 due: python-async(L2, 3d overdue), sql-indexes(L1, due today)
 gap: distributed-tracing (L0, target L3)
 question: 2026-09-07 why does our retry storm only happen on deploy?
+promote: rollback - missed >= 5 times, teach it before adding a check
 decay: 2 pending - run: python brain.py decay
 ```
 
@@ -268,8 +275,53 @@ One file each in `personas/`. Every file has the same four sections: **Gets**,
 | Critic | notes, failed attempts | the missing prerequisite | encouragement |
 | Archivist | whole graph | orphan/decay/archive actions | teaching |
 
-On assistants with real subagents, each runs in an isolated context. Elsewhere,
-sequentially in one thread with the isolation instructed (ADR-013).
+All six run sequentially in one conversation on every assistant that ships here, so the
+isolation — including Examiner not seeing Teacher's reasoning — is **instructed, not
+enforced** (ADR-024, amending ADR-013). Running each in its own subagent context would
+enforce it; nothing in this repo does that yet.
+
+### 7.1 The work gate
+
+A second graph, entered from `checks/REGISTRY.md` rather than `AGENTS.md`, running
+during real work in the user's own repos (ADR-029).
+
+```
+request -> trigger? -no-> answer ungated
+              |
+             yes (writes code, changes design, costs > ~30 min)
+              v
+          restate -> run each check in checks/ and data/checks/ (<=1 question each)
+              -> filter to questions that change the build (ask <=3)
+              -> append a miss line to data/misses.md
+              -> proceed
+```
+
+| Check | Slug | Asks |
+|---|---|---|
+| Tests | `tests` | the one check that fails if this breaks; unnamed inputs |
+| Cost | `cost` | the smaller version; what happens if it is not done |
+| Operations | `operations` | who finds out on failure; blast radius; dependencies |
+
+Same four sections as a persona: **Gets**, **Produces**, **Forbidden**, **Done when**.
+Fixed rather than synthesized per problem, because a persona generated from the problem
+statement inherits the framing that contains the blind spot (ADR-030). The set grows
+only by promotion.
+
+**Miss line format**, matched by `MISS_RE` in `brain.py`:
+
+```
+- YYYY-MM-DD check-slug | what was not specified
+```
+
+Slug is lowercase `[a-z0-9][a-z0-9-]*`. Non-matching lines are prose and are skipped
+silently — the file has a header and the user may annotate it.
+
+**Promotion.** Live count ≥ `policy.promotion_threshold` (5) makes a slug a candidate:
+the assistant writes `data/checks/<slug>.md` and it joins every subsequent gate.
+`cmd_due` surfaces candidates at `/start` so Scout can also teach the underlying gap —
+the single point where the work gate feeds the learning loop. Entries older than
+`policy.miss_expiry_days` (90) are excluded from the count and drain via `decay`
+(ADR-033).
 
 ## 8. Bootstrap
 
@@ -277,7 +329,10 @@ sequentially in one thread with the isolation instructed (ADR-013).
 2. `BOOTSTRAP.md` asks the assistant to state which tool it is, and to confirm.
 3. Assistant runs `python brain.py bootstrap <assistant>`.
 4. Script copies that adapter, updates `config.json`, prints next step.
-5. Assistant runs `python brain.py due` → empty brain → cold-start interview (ADR-020).
+5. Assistant prints the absolute path of the clone and the one-line pointer the user
+   pastes into their assistant's **global** settings, so the work gate also runs in the
+   repos they work in. Machine-specific, never committed, optional.
+6. Assistant runs `python brain.py due` → empty brain → cold-start interview (ADR-020).
 
 Unknown assistant → `AGENTS.md` alone, `start`/`end` typed as words. Fully functional;
 only slash commands are lost.

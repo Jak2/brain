@@ -5,7 +5,8 @@
     "notes": "data/notes",
     "skills": "data/skills",
     "log": "data/log",
-    "local": "data/local"
+    "local": "data/local",
+    "checks": "data/checks"
   },
   "policy": {
     "intervals_days": [1, 3, 7, 16, 35],
@@ -13,7 +14,9 @@
     "question_expiry_days": 60,
     "orphan_archive_days": 90,
     "graph_min_notes": 30,
-    "daily_items": 3
+    "daily_items": 3,
+    "miss_expiry_days": 90,
+    "promotion_threshold": 5
   },
   "assistants": []
 }

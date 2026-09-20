@@ -233,6 +233,40 @@ Stated plainly, because a document that only lists strengths is marketing.
    feature handles not opening the folder for three weeks. That is the most likely way
    this dies.
 
+### Addendum, 2026-09-20 — the second surface
+
+A day later the originating complaint got stated more precisely, and it turned out to
+be two problems wearing one sentence. *"I don't know enough"* is what everything above
+was built for. *"I know it perfectly well and forgot to think about it at 2pm"* is a
+different failure entirely — being taught about testing does not stop you forgetting to
+write a test — and nothing here addressed it.
+
+So there is now a second surface: `checks/REGISTRY.md`, a gate that runs during real
+work in your own repos and asks the three questions most often missing from a prompt.
+It is deliberately *not* folded into the teaching loop (ADR-029). Different cadence,
+different trigger, different nodes.
+
+Two decisions inside it are worth more than the feature:
+
+- **The checks are fixed, not generated per problem** (ADR-030). The obvious design is
+  to read the problem statement and synthesize the relevant personas. That cannot work:
+  the blind spot lives in the framing, so anything derived from the framing reproduces
+  it. Nobody who forgot about 3am failure writes a prompt from which an operations
+  persona would be synthesized.
+- **The gate has a trigger condition** (ADR-031). A gate that fires on "what does this
+  function do" is switched off within the week, and then catches nothing at all — the
+  same abandonment failure decay exists to prevent, arriving faster.
+
+The two surfaces meet at one file, `data/misses.md`. The gate writes what you missed;
+`/start` reads it back; a miss logged five times becomes both a standing check and a
+lesson with evidence attached. That join is the part worth watching: it is the only
+mechanism here that turns a fast, shallow signal into a slow, durable one.
+
+**Which adds a sixth unproven item, and it is the biggest:** nobody has run the gate
+either. Whether three questions before a work session is useful or merely annoying is
+exactly the kind of thing that cannot be settled by design, and the trigger rule that
+decides it is a sentence of prose, enforced by nothing.
+
 ## 10. What is deliberately absent
 
 No database. No embeddings. No web UI. No vector search. No bundled model. No cloud
