@@ -65,23 +65,26 @@ have — and say:
 
 That is the whole setup:
 
-```
-  git clone ──> open the folder ──> "Read BOOTSTRAP.md and follow it."
-                in your assistant                    │
-      ┌──────────────────────────────────────────────┘
-      v
-  identify ──> install ──> create ──> offer the ──> cold-start ──> you have
-  yourself     adapter     data/      work-gate     interview      learned
-               additive    no remote  pointer       5 questions    one thing
-                                      optional
-      │
-      └──> every day after:  /start  ...  /end
+```mermaid
+flowchart TD
+    A["git clone"] --> B["open the folder<br/>in your assistant"]
+    B --> C["say: <i>Read BOOTSTRAP.md and follow it</i>"]
+    C --> D["identify yourself"]
+    D --> E["install your adapter<br/><i>additive, idempotent</i>"]
+    E --> F["create data/<br/><i>its own git repo, no remote</i>"]
+    F --> G["offer the work-gate pointer<br/><i>one line, optional</i>"]
+    G --> H["cold-start interview<br/><i>5 questions</i>"]
+    H --> I(["you have learned one thing"])
+    I --> J["every day after: <b>/start</b> … <b>/end</b>"]
+
+    style I fill:#dff0d8,stroke:#3c763d,color:#1a3c1a
+    style G stroke-dasharray: 4 3
 ```
 
-Step 4 is the only one that asks anything of you beyond answers: one line pasted into
-your assistant's global settings, pointing at this clone, so the work gate also runs in
-the repos you actually work in. Skip it and you lose only that — the learning loop is
-unaffected.
+The work-gate pointer is the only step that asks anything of you beyond answers: one
+line pasted into your assistant's global settings, pointing at this clone, so the work
+gate also runs in the repos you actually work in. Skip it and you lose only that — the
+learning loop is unaffected.
 
 **What the first session looks like.** Five questions about your work and where you
 want to be, then it writes `data/target.md` and 8–12 skill files, then it teaches you
@@ -108,17 +111,23 @@ defines both, so every assistant understands them.
 
 Two surfaces, one file joining them.
 
+```mermaid
+flowchart LR
+    subgraph work ["WORK SURFACE — minutes"]
+        W["<b>checks/REGISTRY.md</b><br/>runs while you build,<br/>in any repo"]
+    end
+    subgraph learn ["LEARNING SURFACE — weeks"]
+        L["<b>AGENTS.md</b><br/>runs at /start and /end"]
+    end
+
+    M[("<b>data/misses.md</b><br/><i>the bridge</i>")]
+
+    W -- "you didn't say what happens<br/>when this fails" --> M
+    M -- "missed 5 times — that's a real gap,<br/>not a checklist line" --> L
+
+    style M fill:#fcf8e3,stroke:#8a6d3b,color:#4a3b14
 ```
-  WORK SURFACE                                    LEARNING SURFACE
-  checks/REGISTRY.md                              AGENTS.md
-  runs while you build, in any repo               runs at /start and /end
-        │                                                    ^
-        │  "you didn't say what happens                      │  "missed 5 times.
-        │   when this fails"                                 │   that's a real gap,
-        v                                                    │   not a checklist line"
-        └──────────────>  data/misses.md  ───────────────────┘
-                          the bridge
-```
+
 
 The work gate is fast and runs in minutes. The learning loop is slow and runs in weeks.
 The fast one catches the miss; the slow one removes the reason for it. Neither works
@@ -151,17 +160,21 @@ You still get commits, history, and undo on your own brain — locally.
 
 ### The day loop
 
-```
-            Scout      Teacher     Examiner              Scribe    brain.py
-/start ──> assess ──> select ──> teach ──> verify ──┬──> capture ──> schedule ──> /end
-                        ^           ^               │   you explained it
-                        │           └──(you can't)──┤   in your own words
-                        │            re-teach it    │
-                        │            differently    │
-                        │                           │ 3rd failure
-                        │         Critic  <─────────┘
-                        └─────────────────┘
-                     names the missing prerequisite
+```mermaid
+flowchart LR
+    START(["/start"]) --> A["assess<br/><i>brain.py due</i>"]
+    A --> S["select<br/><b>Scout</b>"]
+    S --> T["teach<br/><b>Teacher</b>"]
+    T --> V{"verify<br/><b>Examiner</b>"}
+    V -- "you explained it<br/>in your own words" --> C["capture<br/><b>Scribe</b>"]
+    C --> SC["schedule<br/><i>brain.py</i>"]
+    SC --> END(["/end"])
+    V -- "you can't —<br/>re-teach it <i>differently</i>" --> T
+    V -- "3rd failure" --> CR["<b>Critic</b><br/>names the missing<br/>prerequisite"]
+    CR --> S
+
+    style V fill:#fcf8e3,stroke:#8a6d3b,color:#4a3b14
+    style CR fill:#f2dede,stroke:#a94442,color:#4a1414
 ```
 
 **The verify step is the point.** Being taught something and being able to produce it
@@ -189,22 +202,26 @@ spent on a feature nobody measured.
 It lives in [`checks/REGISTRY.md`](checks/REGISTRY.md) and runs in whatever repo you're
 working in, not this one.
 
+```mermaid
+flowchart TD
+    R(["request"]) --> Q{"is it a lookup,<br/>an explanation,<br/>a one-line fix?"}
+    Q -- yes --> N(["just answer.<br/>no gate."])
+    Q -- "no — writes code, changes<br/>a design, costs &gt; ~30 min" --> RS
+    RS["<b>restate it</b><br/>including every assumption<br/>you filled in silently"]
+    RS --> CK["<b>run every check</b> in checks/ and data/checks/<br/><i>one question each, at most</i>"]
+    CK --> F["<b>filter</b> to questions whose answer<br/>changes the build — <i>ask at most 3</i>"]
+    F --> LOG["<b>log every check that ran</b>"]
+    LOG --> MISS[("<b>data/misses.md</b><br/>one line per check that ran:<br/>the miss, or <code>#124; ok</code>")]
+    MISS --> B(["build it"])
+
+    style N fill:#eee,stroke:#999,color:#333
+    style MISS fill:#fcf8e3,stroke:#8a6d3b,color:#4a3b14
+    style Q fill:#d9edf7,stroke:#31708f,color:#123b4d
 ```
-request ──> is it a lookup? ──yes──> just answer. no gate.
-                 │
-                 no  (writes code, changes design, costs > ~30 min)
-                 v
-            restate it, including every assumption you filled in silently
-                 v
-            run every check in checks/ and data/checks/   (one question each, max)
-                 v
-            keep only questions whose answer changes the build   (ask at most 3)
-                 v
-            log EVERY check that ran ──> data/misses.md
-              a miss:  - 2026-09-20 tests | no failing case named
-              a pass:  - 2026-09-20 cost | ok
-                 v
-            build it
+
+```
+- 2026-09-20 tests | no failing case named
+- 2026-09-20 cost | ok
 ```
 
 **Both outcomes get logged.** The `ok` lines are the denominator. Five misses out of
@@ -231,17 +248,20 @@ see what you didn't think to mention.
 
 #### Promotion — how a miss becomes a lesson
 
-```
-  gate catches it ──> data/misses.md ──> brain.py misses
-  gate passes ────────────^  (| ok)          │
-                                             │
-                    ┌────────────────────────┴────────────────┐
-                    │ missed >= 5, still fresh                │ older than 90 days
-                    v                                         v
-       data/checks/<slug>.md          AND          brain.py decay drops it
-       a standing check, forever                   (it no longer describes you)
-                    │
-                    └──> brain.py due surfaces it at /start ──> Scout teaches it
+```mermaid
+flowchart TD
+    G1["gate catches it"] --> M[("data/misses.md")]
+    G2["gate passes<br/><code>#124; ok</code>"] --> M
+    M --> CMD["<i>brain.py misses</i><br/>missed / times it ran"]
+    CMD --> D{"missed &gt;= 5,<br/>still fresh?"}
+    D -- yes --> P["<b>data/checks/&lt;slug&gt;.md</b><br/>a standing check, forever"]
+    D -- "older than 90 days" --> X(["<i>brain.py decay</i> drops it<br/>it no longer describes you"])
+    P --> DUE["<i>brain.py due</i> surfaces it at /start"]
+    DUE --> SC["<b>Scout</b> teaches it"]
+
+    style M fill:#fcf8e3,stroke:#8a6d3b,color:#4a3b14
+    style X fill:#eee,stroke:#999,color:#333
+    style P fill:#dff0d8,stroke:#3c763d,color:#1a3c1a
 ```
 
 Only unexpired misses count toward promotion. The question is whether you *still* do
